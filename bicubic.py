@@ -73,3 +73,42 @@ class BicubicDownSample(nn.Module):
             return x.type('torch.ByteTensor'.format(self.cuda))
         else:
             return x
+
+
+class BicubicDownsampleTargetSize(nn.Module):
+    def __init__(self, target_size, cuda=True, padding='reflect'):
+        super().__init__()
+        self.target_size = target_size
+        self.cuda = cuda
+        self.padding = padding
+        self.bicubic_downsamplers = {}
+
+    def forward(self, x, nhwc=False, clip_round=False, byte_output=False):
+        #input_size = x.shape[1]
+        #with_batch_idx = x.unsqueeze(0)
+        test = BicubicDownsampleTargetSize.downsampling(x, (self.target_size, self.target_size), mode='bilinear')
+        #test = test.squeeze(0)
+        return test
+        #target_factor = self.target_size / input_size
+        #if target_factor not in self.bicubic_downsamplers:
+        #    self.bicubic_downsamplers = BicubicDownSample(target_factor, self.cuda, self.padding)
+        #downsampled = self.bicubic_downsamplers[target_factor].forward(x, nhwc, clip_round, byte_output)
+        #return downsampled
+
+    # https://discuss.pytorch.org/t/autogradable-image-resize/580/7
+    @staticmethod
+    def downsampling(x, size=None, scale_factor=None, mode='nearest'):
+        # define size if user has specified scale_factor
+        if size is None: size = (int(scale_factor*x.size(2)), int(scale_factor*x.size(3)))
+        # create coordinates
+        h = torch.arange(0,size[0]) / (size[0]-1) * 2 - 1
+        w = torch.arange(0,size[1]) / (size[1]-1) * 2 - 1
+        # create grid
+        grid = torch.zeros(size[0],size[1],2)
+        grid[:,:,0] = w.unsqueeze(0).repeat(size[0],1)
+        grid[:,:,1] = h.unsqueeze(0).repeat(size[1],1).transpose(0,1)
+        # expand to match batch size
+        grid = grid.unsqueeze(0).repeat(x.size(0),1,1,1)
+        if x.is_cuda: grid = grid.cuda()
+        # do sampling
+        return F.grid_sample(x, grid, mode=mode)

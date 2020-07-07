@@ -1,11 +1,13 @@
 from PULSE import PULSE
 from torch.utils.data import Dataset, DataLoader
 from torch.nn import DataParallel
+import torch
 from pathlib import Path
 from PIL import Image
 import torchvision
 from math import log10, ceil
 import argparse
+import os
 
 class Images(Dataset):
     def __init__(self, root_dir, duplicates):
@@ -28,14 +30,16 @@ parser = argparse.ArgumentParser(description='PULSE')
 
 #I/O arguments
 parser.add_argument('-input_dir', type=str, default='input', help='input data directory')
+parser.add_argument('-targets_dir', type=str, default='targets', help='targets data directory')
 parser.add_argument('-output_dir', type=str, default='runs', help='output data directory')
+parser.add_argument('-output_suffix', type=str, default='0', help='output data directory')
 parser.add_argument('-cache_dir', type=str, default='cache', help='cache directory for model weights')
 parser.add_argument('-duplicates', type=int, default=1, help='How many HR images to produce for every image in the input directory')
 parser.add_argument('-batch_size', type=int, default=1, help='Batch size to use during optimization')
 
 #PULSE arguments
 parser.add_argument('-seed', type=int, help='manual seed to use')
-parser.add_argument('-loss_str', type=str, default="100*L2+0.05*GEOCROSS", help='Loss function to use')
+parser.add_argument('-loss_str', type=str, default="100*L2+0.05*GEOCROSS+0*L2_IDENTITY", help='Loss function to use')
 parser.add_argument('-eps', type=float, default=2e-3, help='Target for downscaling loss (L2)')
 parser.add_argument('-noise_type', type=str, default='trainable', help='zero, fixed, or trainable')
 parser.add_argument('-num_trainable_noise_layers', type=int, default=5, help='Number of noise layers to optimize')
@@ -49,18 +53,27 @@ parser.add_argument('-save_intermediate', action='store_true', help='Whether to 
 
 kwargs = vars(parser.parse_args())
 
+torch.cuda.set_device(2)
+os.environ['CUDA_VISIBLE_DEVICES'] = '2'
+
 dataset = Images(kwargs["input_dir"], duplicates=kwargs["duplicates"])
+targets_dataset = Images(kwargs["targets_dir"], duplicates=1)
 out_path = Path(kwargs["output_dir"])
+output_suffix = kwargs["output_suffix"]
 out_path.mkdir(parents=True, exist_ok=True)
 
 dataloader = DataLoader(dataset, batch_size=kwargs["batch_size"])
 
 model = PULSE(cache_dir=kwargs["cache_dir"])
-model = DataParallel(model)
+model = model.cuda()
+# model = DataParallel(model)
 
 toPIL = torchvision.transforms.ToPILImage()
+# TODO NOAM: Open identity image
+target_identity_im = targets_dataset[0][0].cuda()
 
 for ref_im, ref_im_name in dataloader:
+    ref_im = ref_im.cuda()
     if(kwargs["save_intermediate"]):
         padding = ceil(log10(100))
         for i in range(kwargs["batch_size"]):
@@ -68,15 +81,15 @@ for ref_im, ref_im_name in dataloader:
             int_path_LR = Path(out_path / ref_im_name[i] / "LR")
             int_path_HR.mkdir(parents=True, exist_ok=True)
             int_path_LR.mkdir(parents=True, exist_ok=True)
-        for j,(HR,LR) in enumerate(model(ref_im,**kwargs)):
+        for j,(HR,LR) in enumerate(model(ref_im,target_identity_im,**kwargs)):
             for i in range(kwargs["batch_size"]):
                 toPIL(HR[i].cpu().detach().clamp(0, 1)).save(
-                    int_path_HR / f"{ref_im_name[i]}_{j:0{padding}}.png")
+                    int_path_HR / f"{ref_im_name[i]}_{j:0{padding}}_{output_suffix}.png")
                 toPIL(LR[i].cpu().detach().clamp(0, 1)).save(
-                    int_path_LR / f"{ref_im_name[i]}_{j:0{padding}}.png")
+                    int_path_LR / f"{ref_im_name[i]}_{j:0{padding}}_{output_suffix}.png")
     else:
         #out_im = model(ref_im,**kwargs)
-        for j,(HR,LR) in enumerate(model(ref_im,**kwargs)):
+        for j,(HR,LR) in enumerate(model(ref_im,target_identity_im,**kwargs)):
             for i in range(kwargs["batch_size"]):
                 toPIL(HR[i].cpu().detach().clamp(0, 1)).save(
-                    out_path / f"{ref_im_name[i]}.png")
+                    out_path / f"{ref_im_name[i]}_{output_suffix}.png")

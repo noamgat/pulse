@@ -1,3 +1,4 @@
+from bicubic import BicubicDownsampleTargetSize
 from stylegan import G_synthesis,G_mapping
 from dataclasses import dataclass
 from SphericalOptimizer import SphericalOptimizer
@@ -29,7 +30,7 @@ class PULSE(torch.nn.Module):
         self.lrelu = torch.nn.LeakyReLU(negative_slope=0.2)
 
         if Path("gaussian_fit.pt").exists():
-            self.gaussian_fit = torch.load("gaussian_fit.pt")
+            self.gaussian_fit = torch.load("gaussian_fit.pt", map_location={'cuda:0': 'cuda:2'})
         else:
             if self.verbose: print("\tLoading Mapping Network")
             mapping = G_mapping().cuda()
@@ -46,7 +47,14 @@ class PULSE(torch.nn.Module):
                 torch.save(self.gaussian_fit,"gaussian_fit.pt")
                 if self.verbose: print("\tSaved \"gaussian_fit.pt\"")
 
+        from facenet_pytorch import InceptionResnetV1
+        # Create an inception resnet (in eval mode):
+        downsample_to_160 = BicubicDownsampleTargetSize(160, True)
+        inception_resnet = InceptionResnetV1(pretrained='vggface2', classify=False).eval()
+        self.face_features_extractor = torch.nn.Sequential(downsample_to_160, inception_resnet)
+
     def forward(self, ref_im,
+                target_identity_im,
                 seed,
                 loss_str,
                 eps,
@@ -120,8 +128,12 @@ class PULSE(torch.nn.Module):
         }
         schedule_func = schedule_dict[lr_schedule]
         scheduler = torch.optim.lr_scheduler.LambdaLR(opt.opt, schedule_func)
-        
-        loss_builder = LossBuilder(ref_im, loss_str, eps).cuda()
+
+        target_identity_vector = self.face_features_extractor.forward(target_identity_im.unsqueeze(0))
+        target_identity_vector = target_identity_vector.squeeze(0)
+        target_identity_vector = target_identity_vector.detach()
+
+        loss_builder = LossBuilder(ref_im, target_identity_vector, loss_str, eps).cuda()
 
         min_loss = np.inf
         min_l2 = np.inf
@@ -146,8 +158,10 @@ class PULSE(torch.nn.Module):
             # Normalize image to [0,1] instead of [-1,1]
             gen_im = (self.synthesis(latent_in, noise)+1)/2
 
+            gen_identity_vector = self.face_features_extractor.forward(gen_im)
+            gen_identity_vector = gen_identity_vector.squeeze(0)
             # Calculate Losses
-            loss, loss_dict = loss_builder(latent_in, gen_im)
+            loss, loss_dict = loss_builder(latent_in, gen_im, gen_identity_vector)
             loss_dict['TOTAL'] = loss
 
             # Save best summary for log

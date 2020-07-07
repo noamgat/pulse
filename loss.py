@@ -2,7 +2,7 @@ import torch
 from bicubic import BicubicDownSample
 
 class LossBuilder(torch.nn.Module):
-    def __init__(self, ref_im, loss_str, eps):
+    def __init__(self, ref_im, target_identity_vector, loss_str, eps):
         super(LossBuilder, self).__init__()
         assert ref_im.shape[2]==ref_im.shape[3]
         im_size = ref_im.shape[2]
@@ -10,6 +10,7 @@ class LossBuilder(torch.nn.Module):
         assert im_size*factor==1024
         self.D = BicubicDownSample(factor=factor)
         self.ref_im = ref_im
+        self.target_identity_vector = target_identity_vector
         self.parsed_loss = [loss_term.split('*') for loss_term in loss_str.split('+')]
         self.eps = eps
 
@@ -25,6 +26,12 @@ class LossBuilder(torch.nn.Module):
     def _loss_l1(self, gen_im_lr, ref_im, **kwargs):
         return 10*((gen_im_lr - ref_im).abs().mean((1, 2, 3)).clamp(min=self.eps).sum())
 
+    def _loss_l2_identity(self, gen_identity_vector, target_identity_vector, **kwargs):
+        return ((gen_identity_vector - target_identity_vector).pow(2).mean(0).sum())
+
+    def _loss_l1_identity(self, gen_identity_vector, target_identity_vector, **kwargs):
+        return 10*((gen_identity_vector - target_identity_vector).abs().mean(0).sum())
+
     # Uses geodesic distance on sphere to sum pairwise distances of the 18 vectors
     def _loss_geocross(self, latent, **kwargs):
         if(latent.shape[1] == 1):
@@ -38,16 +45,20 @@ class LossBuilder(torch.nn.Module):
             D = ((D.pow(2)*512).mean((1, 2))/8.).sum()
             return D
 
-    def forward(self, latent, gen_im):
+    def forward(self, latent, gen_im, gen_identity_vector):
         var_dict = {'latent': latent,
                     'gen_im_lr': self.D(gen_im),
                     'ref_im': self.ref_im,
+                    'gen_identity_vector': gen_identity_vector,
+                    'target_identity_vector': self.target_identity_vector
                     }
         loss = 0
         loss_fun_dict = {
             'L2': self._loss_l2,
             'L1': self._loss_l1,
             'GEOCROSS': self._loss_geocross,
+            'L2_IDENTITY': self._loss_l2_identity,
+            'L1_IDENTITY': self._loss_l1_identity,
         }
         losses = {}
         for weight, loss_type in self.parsed_loss:

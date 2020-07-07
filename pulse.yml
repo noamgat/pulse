@@ -61,3 +61,4 @@ dependencies:
   - zstd=1.3.7
   - pip:
     - dlib==19.19.0
+    - facenet_pytorch
