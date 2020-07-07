@@ -84,9 +84,12 @@ class BicubicDownsampleTargetSize(nn.Module):
         self.bicubic_downsamplers = {}
 
     def forward(self, x, nhwc=False, clip_round=False, byte_output=False):
-        #input_size = x.shape[1]
+        input_size = x.shape[1]
         #with_batch_idx = x.unsqueeze(0)
-        test = BicubicDownsampleTargetSize.downsampling(x, (self.target_size, self.target_size), mode='bilinear')
+        if input_size > self.target_size:
+            raise Exception("Input size must be between target_size/2 and target_size")
+        mode = 'bilinear' if input_size >= self.target_size / 2 else 'area'
+        test = BicubicDownsampleTargetSize.downsampling(x, (self.target_size, self.target_size), mode=mode)
         #test = test.squeeze(0)
         return test
         #target_factor = self.target_size / input_size
@@ -98,6 +101,10 @@ class BicubicDownsampleTargetSize(nn.Module):
     # https://discuss.pytorch.org/t/autogradable-image-resize/580/7
     @staticmethod
     def downsampling(x, size=None, scale_factor=None, mode='nearest'):
+        import torch.nn.functional
+        align_corners = True if mode == 'bilinear' else None
+        downsampled = torch.nn.functional.interpolate(x, size=size, mode=mode, align_corners=align_corners)
+        return downsampled
         # define size if user has specified scale_factor
         if size is None: size = (int(scale_factor*x.size(2)), int(scale_factor*x.size(3)))
         # create coordinates

@@ -72,6 +72,12 @@ toPIL = torchvision.transforms.ToPILImage()
 # TODO NOAM: Open identity image
 target_identity_im = targets_dataset[0][0].cuda()
 
+#from bicubic import BicubicDownsampleTargetSize
+#test = BicubicDownsampleTargetSize.downsampling(target_identity_im.unsqueeze(0), (50, 50), mode='area').squeeze(0)
+#toPIL(test.cpu().detach().clamp(0, 1)).save('runs/downsample.png')
+#toPIL(target_identity_im.cpu().detach().clamp(0, 1)).save('runs/input.png')
+#exit(0)
+
 for ref_im, ref_im_name in dataloader:
     ref_im = ref_im.cuda()
     if(kwargs["save_intermediate"]):
@@ -91,5 +97,6 @@ for ref_im, ref_im_name in dataloader:
         #out_im = model(ref_im,**kwargs)
         for j,(HR,LR) in enumerate(model(ref_im,target_identity_im,**kwargs)):
             for i in range(kwargs["batch_size"]):
-                toPIL(HR[i].cpu().detach().clamp(0, 1)).save(
-                    out_path / f"{ref_im_name[i]}_{output_suffix}.png")
+                output_filename = out_path / f"{ref_im_name[i]}_{output_suffix}.png"
+                toPIL(HR[i].cpu().detach().clamp(0, 1)).save(output_filename)
+                print(f"Created {output_filename}")
