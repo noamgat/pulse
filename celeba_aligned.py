@@ -32,14 +32,39 @@ def build_aligned_celeba(orig_celeba_folder, new_celeba_folder):
     return celeb_a
 
 
+class CelebAPairsDataset(Dataset):
+    def __init__(self, celeb_a: CelebA, same_ratio=0.5):
+        super(CelebAPairsDataset, self).__init__()
+        self.celeb_a = celeb_a
+        from collections import defaultdict
+        identity_dicts = defaultdict(list)
+        for idx, identity_idx in enumerate(large.identity):
+            identity_dicts[identity_idx.item()].append(idx)
+        self.identity_dicts = identity_dicts
+        self.identity_indices = list(self.identity_dicts.keys())
+        self.same_ratio = same_ratio
+
+    def __len__(self):
+        return len(self.celeb_a) * (len(self.celeb_a) + 1) / 2
+
+    def __getitem__(self, item):
+        is_same = int(item * self.same_ratio) < int((item + 1) * self.same_ratio)
+        if is_same:
+            identity = 0
+            while len(self.identity_dicts[identity]) < 2:
+                identity, = np.random.choice(self.identity_indices, 1)
+            idx1, idx2 = np.random.choice(self.identity_dicts[identity], 2, replace=False)
+        else:
+            identities = np.random.choice(self.identity_indices, 2, replace=False)
+            idx1, = np.random.choice(self.identity_dicts[identities[0]], 1)
+            idx2, = np.random.choice(self.identity_dicts[identities[1]], 1)
+        return self.celeb_a[idx1][0], self.celeb_a[idx2][0], 1 - int(is_same)
+
 if __name__ == '__main__':
     large = build_aligned_celeba('CelebA_Raw', 'CelebA_large')
     small = build_aligned_celeba('CelebA_Raw', 'CelebA_small')
 
-    from collections import defaultdict
-    identity_dicts = defaultdict(list)
-    for idx, identity_idx in enumerate(large.identity):
-        identity_dicts[identity_idx.item()].append(idx)
+    pairs_dataset = CelebAPairsDataset(large, same_ratio=0.5)
 
     from bicubic import BicubicDownsampleTargetSize
     from facenet_pytorch.models.inception_resnet_v1 import InceptionResnetV1
@@ -51,20 +76,16 @@ if __name__ == '__main__':
     num_trials = 1000
     same_person_deltas = []
     different_person_deltas = []
-    identity_indices = list(identity_dicts.keys())
-    for _ in tqdm(range(num_trials)):
-        identities = np.random.choice(identity_indices, 2, replace=False)
-        if min(len(identity_dicts[identities[0]]), len(identity_dicts[identities[1]])) < 2:
-            continue
-        p1_a, p1_b = np.random.choice(identity_dicts[identities[0]], 2, replace=False)
-        p2_a, = np.random.choice(identity_dicts[identities[1]], 1)
-        images = [large[idx][0] for idx in (p1_a, p1_b, p2_a)]
+    for i in tqdm(range(num_trials)):
+        p1, p2, is_different = pairs_dataset[i]
+        images = [p1, p2]
         feature_vectors = [face_features_extractor(img.unsqueeze(0)) for img in images]
-        delta_same_person = (feature_vectors[1] - feature_vectors[0]).abs().sum().item()
-        delta_different = (feature_vectors[2] - feature_vectors[0]).abs().sum().item()
-        same_person_deltas.append(delta_same_person)
-        different_person_deltas.append(delta_different)
-    print(f"Number of experiments: {len(same_person_deltas)}")
+        delta_feature = (feature_vectors[1] - feature_vectors[0]).abs().sum().item()
+        if is_different:
+            different_person_deltas.append(delta_feature)
+        else:
+            same_person_deltas.append(delta_feature)
+    print(f"Number of experiments: {num_trials}")
     m1 = np.mean(same_person_deltas)
     std1 = np.std(same_person_deltas)
     m2 = np.mean(different_person_deltas)
@@ -72,6 +93,6 @@ if __name__ == '__main__':
     print(f"Average Same Person Delta: {m1}. STD: {std1}")
     print(f"Average Different Person Delta: {m2}. STD: {std2}")
     cutoff_point = m1 + (m2 - m1) * (std1 / (std1 + std2))
-    cutoff_accuracy = ((np.array(same_person_deltas) < cutoff_point).sum() + (np.array(different_person_deltas) > cutoff_point).sum()) / (len(same_person_deltas)*2)
+    cutoff_accuracy = ((np.array(same_person_deltas) < cutoff_point).sum() + (np.array(different_person_deltas) > cutoff_point).sum()) / num_trials
     print(f"Cutoff training accuracy: {100 * cutoff_accuracy}")
     print("Test complete")
