@@ -6,6 +6,9 @@ import numpy as np
 import torch
 import random
 
+from tqdm import tqdm
+
+
 def build_aligned_celeba(orig_celeba_folder, new_celeba_folder):
     celeb_a = CelebA(root=orig_celeba_folder,
                      split='all',
@@ -45,11 +48,11 @@ if __name__ == '__main__':
     inception_resnet = InceptionResnetV1(pretrained='vggface2', classify=False).eval()
     face_features_extractor = torch.nn.Sequential(downsample_to_160, inception_resnet)
 
-    num_trials = 10000
+    num_trials = 1000
     same_person_deltas = []
     different_person_deltas = []
     identity_indices = list(identity_dicts.keys())
-    for _ in range(num_trials):
+    for _ in tqdm(range(num_trials)):
         identities = np.random.choice(identity_indices, 2, replace=False)
         if min(len(identity_dicts[identities[0]]), len(identity_dicts[identities[1]])) < 2:
             continue
