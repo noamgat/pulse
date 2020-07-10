@@ -44,6 +44,7 @@ dependencies:
   - python=3.8.2
   - python-dateutil=2.8.1
   - pytorch=1.5.0
+  - pytorch-lightning
   - pytz=2020.1
   - readline=8.0
   - requests=2.23.0

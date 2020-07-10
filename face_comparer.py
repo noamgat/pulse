@@ -27,7 +27,7 @@ class FaceComparer(torch.nn.Module):
         super(FaceComparer, self).__init__()
         downsample_to_160 = BicubicDownsampleTargetSize(160, True)
         pretrained_name = 'vggface2' if load_pretrained else None
-        inception_resnet = InceptionResnetV1(pretrained=pretrained_name, classify=False)
+        inception_resnet = InceptionResnetV1(pretrained=pretrained_name, classify=False).eval()
         self.face_features_extractor = torch.nn.Sequential(downsample_to_160, inception_resnet)
         self.tail = build_mlp(512, [], 1)
 
@@ -35,6 +35,10 @@ class FaceComparer(torch.nn.Module):
         features_1 = self.face_features_extractor(x_1)
         features_2 = self.face_features_extractor(x_2)
         features_diff = features_1 - features_2
+        # TODO: ABS? Multiply by sign of first element? Square?
+        features_diff = abs(features_diff)
         mlp_output = self.tail(features_diff)
-        decision = torch.sigmoid(mlp_output)
+        mlp_output = mlp_output.squeeze(1)
+        # decision = torch.sigmoid(mlp_output) #Using BCE loss, that will sigmoid
+        decision = mlp_output
         return decision

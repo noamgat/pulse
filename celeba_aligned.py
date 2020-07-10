@@ -9,9 +9,9 @@ import random
 from tqdm import tqdm
 
 
-def build_aligned_celeba(orig_celeba_folder, new_celeba_folder):
+def build_aligned_celeba(orig_celeba_folder, new_celeba_folder, split='all'):
     celeb_a = CelebA(root=orig_celeba_folder,
-                     split='all',
+                     split=split,
                      download=False,
                      target_type='identity',
                      transform=torchvision.transforms.ToTensor())
@@ -33,19 +33,20 @@ def build_aligned_celeba(orig_celeba_folder, new_celeba_folder):
 
 
 class CelebAPairsDataset(Dataset):
-    def __init__(self, celeb_a: CelebA, same_ratio=0.5):
+    def __init__(self, celeb_a: CelebA, same_ratio=0.5, num_samples=10000):
         super(CelebAPairsDataset, self).__init__()
         self.celeb_a = celeb_a
         from collections import defaultdict
         identity_dicts = defaultdict(list)
-        for idx, identity_idx in enumerate(large.identity):
+        for idx, identity_idx in enumerate(celeb_a.identity):
             identity_dicts[identity_idx.item()].append(idx)
         self.identity_dicts = identity_dicts
         self.identity_indices = list(self.identity_dicts.keys())
         self.same_ratio = same_ratio
+        self.num_samples = num_samples
 
     def __len__(self):
-        return len(self.celeb_a) * (len(self.celeb_a) + 1) / 2
+        return self.num_samples
 
     def __getitem__(self, item):
         is_same = int(item * self.same_ratio) < int((item + 1) * self.same_ratio)
