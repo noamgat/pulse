@@ -19,7 +19,7 @@ def build_aligned_celeba(orig_celeba_folder, new_celeba_folder, split='all'):
     celeb_a.filename = [f"{os.path.splitext(fn)[0]}_0.png" for fn in celeb_a.filename]
     img_folder = os.path.join(new_celeba_folder, celeb_a.base_folder, "img_align_celeba")
     existing_indices = [os.path.exists(os.path.join(img_folder, fn)) for fn in celeb_a.filename]
-    print(f"{sum(existing_indices)} / {len(celeb_a.filename)} images exist in {new_celeba_folder}")
+    print(f"{sum(existing_indices)} / {len(celeb_a.filename)} images exist in {new_celeba_folder} split {split}")
 
     for list_attr in ['filename', 'identity', 'bbox', 'landmarks_align', 'attr']:
         attr_val = getattr(celeb_a, list_attr)
@@ -59,7 +59,7 @@ class CelebAPairsDataset(Dataset):
             identities = np.random.choice(self.identity_indices, 2, replace=False)
             idx1, = np.random.choice(self.identity_dicts[identities[0]], 1)
             idx2, = np.random.choice(self.identity_dicts[identities[1]], 1)
-        return self.celeb_a[idx1][0], self.celeb_a[idx2][0], 1 - int(is_same)
+        return self.celeb_a[idx1][0], self.celeb_a[idx2][0], 0 if is_same else 1
 
 if __name__ == '__main__':
     large = build_aligned_celeba('CelebA_Raw', 'CelebA_large')

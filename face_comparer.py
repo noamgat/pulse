@@ -30,6 +30,10 @@ class FaceComparer(torch.nn.Module):
         inception_resnet = InceptionResnetV1(pretrained=pretrained_name, classify=False).eval()
         self.face_features_extractor = torch.nn.Sequential(downsample_to_160, inception_resnet)
         self.tail = build_mlp(512, [], 1)
+        last_fc = self.tail[0]
+        last_fc.weight.data = torch.ones_like(last_fc.weight.data)
+        last_fc.bias.data = torch.ones_like(last_fc.bias.data) * -21
+        print("Done")
 
     def forward(self, x_1, x_2):
         features_1 = self.face_features_extractor(x_1)
@@ -38,7 +42,11 @@ class FaceComparer(torch.nn.Module):
         # TODO: ABS? Multiply by sign of first element? Square?
         features_diff = abs(features_diff)
         mlp_output = self.tail(features_diff)
-        mlp_output = mlp_output.squeeze(1)
+        #mlp_output = mlp_output.squeeze(1)
         # decision = torch.sigmoid(mlp_output) #Using BCE loss, that will sigmoid
         decision = mlp_output
+        threshold_decision = features_diff.sum(dim=1)
+        threshold_decision = threshold_decision - 21
+        threshold_decision = threshold_decision.unsqueeze(1)
+        #return threshold_decision
         return decision
