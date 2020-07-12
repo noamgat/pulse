@@ -30,7 +30,7 @@ class FaceComparerTrainer(LightningModule):
 
     def get_dataloader(self, split='train', same_ratio=0.5, batch_size=16):
         large = build_aligned_celeba('CelebA_Raw', 'CelebA_large', split=split)
-        pairs_dataset = CelebAPairsDataset(large, same_ratio=same_ratio, num_samples=500)
+        pairs_dataset = CelebAPairsDataset(large, same_ratio=same_ratio, num_samples=10000)
         return DataLoader(pairs_dataset, batch_size=batch_size, num_workers=2)
 
     @pl.data_loader
