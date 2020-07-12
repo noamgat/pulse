@@ -23,16 +23,17 @@ def build_mlp(input_dim, hidden_dims, output_dim):
 
 
 class FaceComparer(torch.nn.Module):
-    def __init__(self, load_pretrained=True):
+    def __init__(self, load_pretrained=True, hidden_dims=[], initial_bias=0):
         super(FaceComparer, self).__init__()
         downsample_to_160 = BicubicDownsampleTargetSize(160, True)
         pretrained_name = 'vggface2' if load_pretrained else None
         inception_resnet = InceptionResnetV1(pretrained=pretrained_name, classify=False).eval()
         self.face_features_extractor = torch.nn.Sequential(downsample_to_160, inception_resnet)
-        self.tail = build_mlp(512, [], 1)
+        self.tail = build_mlp(512, hidden_dims, 1)
         last_fc = self.tail[0]
         last_fc.weight.data = torch.ones_like(last_fc.weight.data)
-        last_fc.bias.data = torch.ones_like(last_fc.bias.data) * -21
+        #last_fc.bias.data = torch.ones_like(last_fc.bias.data) * -21
+        last_fc.bias.data = torch.ones_like(last_fc.bias.data) * initial_bias
         print("Done")
 
     def forward(self, x_1, x_2):
