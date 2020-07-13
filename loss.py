@@ -27,10 +27,10 @@ class LossBuilder(torch.nn.Module):
         return 10*((gen_im_lr - ref_im).abs().mean((1, 2, 3)).clamp(min=self.eps).sum())
 
     def _loss_l2_identity(self, gen_identity_vector, target_identity_vector, **kwargs):
-        return ((gen_identity_vector - target_identity_vector).pow(2).mean(0).sum())
+        return ((gen_identity_vector - target_identity_vector).pow(2).mean(1).sum())
 
     def _loss_l1_identity(self, gen_identity_vector, target_identity_vector, **kwargs):
-        return 10*((gen_identity_vector - target_identity_vector).abs().mean(0).sum())
+        return 10*((gen_identity_vector - target_identity_vector).abs().mean(1).sum())
 
     # Uses geodesic distance on sphere to sum pairwise distances of the 18 vectors
     def _loss_geocross(self, latent, **kwargs):

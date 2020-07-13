@@ -1,3 +1,5 @@
+import os
+
 from bicubic import BicubicDownsampleTargetSize
 from stylegan import G_synthesis,G_mapping
 from dataclasses import dataclass
@@ -30,7 +32,9 @@ class PULSE(torch.nn.Module):
         self.lrelu = torch.nn.LeakyReLU(negative_slope=0.2)
 
         if Path("gaussian_fit.pt").exists():
-            self.gaussian_fit = torch.load("gaussian_fit.pt", map_location={'cuda:0': 'cuda:2'})
+            # slight hack to get it from this flag
+            cuda_id = os.environ['CUDA_VISIBLE_DEVICES']
+            self.gaussian_fit = torch.load("gaussian_fit.pt", map_location={'cuda:0': f'cuda:{cuda_id}'})
         else:
             if self.verbose: print("\tLoading Mapping Network")
             mapping = G_mapping().cuda()
@@ -129,9 +133,10 @@ class PULSE(torch.nn.Module):
         schedule_func = schedule_dict[lr_schedule]
         scheduler = torch.optim.lr_scheduler.LambdaLR(opt.opt, schedule_func)
 
-        target_identity_vector = self.face_features_extractor.forward(target_identity_im.unsqueeze(0))
-        target_identity_vector = target_identity_vector.squeeze(0)
-        target_identity_vector = target_identity_vector.detach()
+        target_identity_vector = None
+        if target_identity_im is not None:
+            target_identity_vector = self.face_features_extractor.forward(target_identity_im)
+            target_identity_vector = target_identity_vector.detach()
 
         loss_builder = LossBuilder(ref_im, target_identity_vector, loss_str, eps).cuda()
 
@@ -159,7 +164,6 @@ class PULSE(torch.nn.Module):
             gen_im = (self.synthesis(latent_in, noise)+1)/2
 
             gen_identity_vector = self.face_features_extractor.forward(gen_im)
-            gen_identity_vector = gen_identity_vector.squeeze(0)
             # Calculate Losses
             loss, loss_dict = loss_builder(latent_in, gen_im, gen_identity_vector)
             loss_dict['TOTAL'] = loss

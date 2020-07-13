@@ -9,22 +9,32 @@ from math import log10, ceil
 import argparse
 import os
 
+
 class Images(Dataset):
-    def __init__(self, root_dir, duplicates):
+    def __init__(self, root_dir, duplicates, targets_dir=None):
         self.root_path = Path(root_dir)
         self.image_list = list(self.root_path.glob("*.png"))
         self.duplicates = duplicates # Number of times to duplicate the image in the dataset to produce multiple HR images
+        self.targets_path = Path(targets_dir) if targets_dir else ''
 
     def __len__(self):
         return self.duplicates*len(self.image_list)
 
     def __getitem__(self, idx):
         img_path = self.image_list[idx//self.duplicates]
+        target_image = ''
+        if self.targets_path:
+            img_filename = os.path.split(img_path)[-1]
+            target_img_path = self.targets_path.joinpath(img_filename)
+            if not target_img_path.exists():
+                raise Exception(f"Target image not found at {target_img_path}")
+            target_image = torchvision.transforms.ToTensor()(Image.open(target_img_path))
+
         image = torchvision.transforms.ToTensor()(Image.open(img_path))
         if(self.duplicates == 1):
-            return image,img_path.stem
+            return image,img_path.stem,target_image
         else:
-            return image,img_path.stem+f"_{(idx % self.duplicates)+1}"
+            return image,img_path.stem+f"_{(idx % self.duplicates)+1}",target_image
 
 parser = argparse.ArgumentParser(description='PULSE')
 
@@ -39,7 +49,7 @@ parser.add_argument('-batch_size', type=int, default=1, help='Batch size to use 
 
 #PULSE arguments
 parser.add_argument('-seed', type=int, help='manual seed to use')
-parser.add_argument('-loss_str', type=str, default="100*L2+0.05*GEOCROSS+0*L2_IDENTITY", help='Loss function to use')
+parser.add_argument('-loss_str', type=str, default="100*L2+0.05*GEOCROSS+0.1*L2_IDENTITY", help='Loss function to use')
 parser.add_argument('-eps', type=float, default=2e-3, help='Target for downscaling loss (L2)')
 parser.add_argument('-noise_type', type=str, default='trainable', help='zero, fixed, or trainable')
 parser.add_argument('-num_trainable_noise_layers', type=int, default=5, help='Number of noise layers to optimize')
@@ -50,14 +60,15 @@ parser.add_argument('-learning_rate', type=float, default=0.4, help='Learning ra
 parser.add_argument('-steps', type=int, default=100, help='Number of optimization steps')
 parser.add_argument('-lr_schedule', type=str, default='linear1cycledrop', help='fixed, linear1cycledrop, linear1cycle')
 parser.add_argument('-save_intermediate', action='store_true', help='Whether to store and save intermediate HR and LR images during optimization')
+parser.add_argument('-gpu_id', default=2, type=int, help='Which gpu to use')
 
 kwargs = vars(parser.parse_args())
 
-torch.cuda.set_device(2)
-os.environ['CUDA_VISIBLE_DEVICES'] = '2'
+torch.cuda.set_device(kwargs['gpu_id'])
+os.environ['CUDA_VISIBLE_DEVICES'] = str(kwargs['gpu_id'])
 
-dataset = Images(kwargs["input_dir"], duplicates=kwargs["duplicates"])
-targets_dataset = Images(kwargs["targets_dir"], duplicates=1)
+dataset = Images(kwargs["input_dir"], duplicates=kwargs["duplicates"], targets_dir=kwargs["targets_dir"])
+#targets_dataset = Images(kwargs["targets_dir"], duplicates=1)
 out_path = Path(kwargs["output_dir"])
 output_suffix = kwargs["output_suffix"]
 out_path.mkdir(parents=True, exist_ok=True)
@@ -69,8 +80,6 @@ model = model.cuda()
 # model = DataParallel(model)
 
 toPIL = torchvision.transforms.ToPILImage()
-# TODO NOAM: Open identity image
-target_identity_im = targets_dataset[0][0].cuda()
 
 #from bicubic import BicubicDownsampleTargetSize
 #test = BicubicDownsampleTargetSize.downsampling(target_identity_im.unsqueeze(0), (50, 50), mode='area').squeeze(0)
@@ -78,8 +87,12 @@ target_identity_im = targets_dataset[0][0].cuda()
 #toPIL(target_identity_im.cpu().detach().clamp(0, 1)).save('runs/input.png')
 #exit(0)
 
-for ref_im, ref_im_name in dataloader:
+for ref_im, ref_im_name, target_identity_im in dataloader:
     ref_im = ref_im.cuda()
+    if isinstance(target_identity_im, torch.FloatTensor):
+        target_identity_im = target_identity_im.cuda()
+    else:
+        target_identity_im = None
     if(kwargs["save_intermediate"]):
         padding = ceil(log10(100))
         for i in range(kwargs["batch_size"]):
