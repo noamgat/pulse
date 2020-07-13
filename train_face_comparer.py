@@ -106,6 +106,8 @@ if __name__ == '__main__':
     trainer_params = config['trainer_params']
     model_params = config['model_params']
     checkpoint_params = config['checkpoint_params']
+    if 'filepath' in checkpoint_params:
+        os.makedirs(checkpoint_params['filepath'], exist_ok=True)
     checkpoint_callback = ModelCheckpoint(**checkpoint_params)
     if checkpoint_callback.save_last:
         last_ckpt = os.path.join(checkpoint_callback.dirpath, checkpoint_callback.prefix + 'last.ckpt')
