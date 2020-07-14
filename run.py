@@ -11,9 +11,9 @@ import os
 
 
 class Images(Dataset):
-    def __init__(self, root_dir, duplicates, targets_dir=None):
+    def __init__(self, root_dir, duplicates, targets_dir=None, filename_prefix=''):
         self.root_path = Path(root_dir)
-        self.image_list = list(self.root_path.glob("*.png"))
+        self.image_list = list(self.root_path.glob(f"{filename_prefix}*.png"))
         self.duplicates = duplicates # Number of times to duplicate the image in the dataset to produce multiple HR images
         self.targets_path = Path(targets_dir) if targets_dir else ''
 
@@ -47,6 +47,7 @@ parser.add_argument('-cache_dir', type=str, default='cache', help='cache directo
 parser.add_argument('-duplicates', type=int, default=1, help='How many HR images to produce for every image in the input directory')
 parser.add_argument('-batch_size', type=int, default=1, help='Batch size to use during optimization')
 parser.add_argument('-overwrite', action='store_true', help='Recreate files even if the output file exists')
+parser.add_argument('-input_prefix', type=str, default='', help='Only operate on filenames begnning with X')
 
 #PULSE arguments
 parser.add_argument('-seed', type=int, help='manual seed to use')
@@ -68,7 +69,11 @@ kwargs = vars(parser.parse_args())
 torch.cuda.set_device(kwargs['gpu_id'])
 os.environ['CUDA_VISIBLE_DEVICES'] = str(kwargs['gpu_id'])
 
-dataset = Images(kwargs["input_dir"], duplicates=kwargs["duplicates"], targets_dir=kwargs["targets_dir"])
+dataset = Images(kwargs["input_dir"],
+                 duplicates=kwargs["duplicates"],
+                 targets_dir=kwargs["targets_dir"],
+                 filename_prefix=kwargs["input_prefix"])
+print(f"Running on {len(dataset)} files")
 #targets_dataset = Images(kwargs["targets_dir"], duplicates=1)
 out_path = Path(kwargs["output_dir"])
 output_suffix = kwargs["output_suffix"]
