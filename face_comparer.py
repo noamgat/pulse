@@ -36,9 +36,18 @@ class FaceComparer(torch.nn.Module):
             last_fc.bias.data = torch.ones_like(last_fc.bias.data) * initial_bias
         print("Done")
 
+    def extract_features(self, image_or_features):
+        if len(image_or_features.shape) == 2:
+            # Channels: Batch Size, Features
+            return image_or_features
+        else:
+            # Channels: Batch Size, CHW
+            return self.face_features_extractor(image_or_features)
+
     def forward(self, x_1, x_2):
-        features_1 = self.face_features_extractor(x_1)
-        features_2 = self.face_features_extractor(x_2)
+        # Allow the forward pass to accept both images and pre-calculated feature vectors
+        features_1 = self.extract_features(x_1)
+        features_2 = self.extract_features(x_2)
         features_diff = features_1 - features_2
         # TODO: ABS? Multiply by sign of first element? Square?
         features_diff = abs(features_diff)

@@ -16,7 +16,7 @@ import torch.nn.functional as F
 
 import pl_transfer_learning_helpers
 
-class FaceComparerTrainer(LightningModule):
+class FaceComparerModule(LightningModule):
     def __init__(self, *args, **kwargs):
         face_comparer_params = kwargs.pop('face_comparer_params', {})
         super().__init__(*args, **kwargs)
@@ -90,18 +90,8 @@ class FaceComparerTrainer(LightningModule):
         return {'progress_bar': results, 'log': results, 'val_loss': results['val_loss']}
 
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='FaceComparerTrainer')
-
-    # I/O arguments
-    parser.add_argument('-config_file', type=str, default='configs/linear_basic.yml', help='Config file')
-    parser.add_argument('-force_restart', default=False, help='Start training from scratch even if exists', action='store_true')
-    parser.add_argument('-gpu_id', default=2, type=int, help='Which gpu to use')
-    opts = parser.parse_args()
-
-    torch.cuda.set_device(opts.gpu_id)
-    os.environ['CUDA_VISIBLE_DEVICES'] = str(opts.gpu_id)
-    with open(opts.config_file) as fd:
+def load_face_comparer_module(config_file_path):
+    with open(config_file_path) as fd:
         config = yaml.safe_load(fd)
     trainer_params = config['trainer_params']
     model_params = config['model_params']
@@ -119,5 +109,21 @@ if __name__ == '__main__':
                       resume_from_checkpoint=last_ckpt,
                       **trainer_params)
     #print(F'Trainer running at {trainer.logger.log_dir}')
-    net = FaceComparerTrainer(**model_params)
+    net = FaceComparerModule(**model_params)
+    return net, trainer
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='FaceComparerTrainer')
+
+    # I/O arguments
+    parser.add_argument('-config_file', type=str, default='configs/linear_basic.yml', help='Config file')
+    parser.add_argument('-force_restart', default=False, help='Start training from scratch even if exists', action='store_true')
+    parser.add_argument('-gpu_id', default=2, type=int, help='Which gpu to use')
+    opts = parser.parse_args()
+
+    torch.cuda.set_device(opts.gpu_id)
+    os.environ['CUDA_VISIBLE_DEVICES'] = str(opts.gpu_id)
+
+    net, trainer = load_face_comparer_module(opts.config_file)
     trainer.fit(net)
