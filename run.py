@@ -46,6 +46,7 @@ parser.add_argument('-output_suffix', type=str, default='0', help='output data d
 parser.add_argument('-cache_dir', type=str, default='cache', help='cache directory for model weights')
 parser.add_argument('-duplicates', type=int, default=1, help='How many HR images to produce for every image in the input directory')
 parser.add_argument('-batch_size', type=int, default=1, help='Batch size to use during optimization')
+parser.add_argument('-overwrite', action='store_true', help='Recreate files even if the output file exists')
 
 #PULSE arguments
 parser.add_argument('-seed', type=int, help='manual seed to use')
@@ -88,6 +89,16 @@ toPIL = torchvision.transforms.ToPILImage()
 #exit(0)
 
 for ref_im, ref_im_name, target_identity_im in dataloader:
+    if not kwargs['overwrite']:
+        skip_batch = True
+        for i in range(kwargs["batch_size"]):
+            output_filename = out_path / f"{ref_im_name[i]}_{output_suffix}.png"
+            if not os.path.exists(output_filename):
+                skip_batch = False
+                break
+        if skip_batch:
+            print(f"Skipping batch of files {ref_im_name} as the outputs exist")
+            continue
     ref_im = ref_im.cuda()
     if isinstance(target_identity_im, torch.FloatTensor):
         target_identity_im = target_identity_im.cuda()
