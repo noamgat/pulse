@@ -51,11 +51,10 @@ class PULSE(torch.nn.Module):
                 torch.save(self.gaussian_fit,"gaussian_fit.pt")
                 if self.verbose: print("\tSaved \"gaussian_fit.pt\"")
 
-        from facenet_pytorch import InceptionResnetV1
+        from train_face_comparer import load_face_comparer_module
         # Create an inception resnet (in eval mode):
-        downsample_to_160 = BicubicDownsampleTargetSize(160, True)
-        inception_resnet = InceptionResnetV1(pretrained='vggface2', classify=False).eval()
-        self.face_features_extractor = torch.nn.Sequential(downsample_to_160, inception_resnet)
+        net, trainer = load_face_comparer_module('configs/linear_basic.yml', for_eval=True)
+        self.face_features_extractor = net.face_comparer
 
     def forward(self, ref_im,
                 target_identity_im,
@@ -133,12 +132,12 @@ class PULSE(torch.nn.Module):
         schedule_func = schedule_dict[lr_schedule]
         scheduler = torch.optim.lr_scheduler.LambdaLR(opt.opt, schedule_func)
 
-        target_identity_vector = None
-        if target_identity_im is not None:
-            target_identity_vector = self.face_features_extractor.forward(target_identity_im)
-            target_identity_vector = target_identity_vector.detach()
+        #target_identity_vector = None
+        #if target_identity_im is not None:
+        #    target_identity_vector = self.face_features_extractor.extract_features(target_identity_im)
+        #    target_identity_vector = target_identity_vector.detach()
 
-        loss_builder = LossBuilder(ref_im, target_identity_vector, loss_str, eps).cuda()
+        loss_builder = LossBuilder(ref_im, target_identity_im, self.face_features_extractor, loss_str, eps).cuda()
 
         min_loss = np.inf
         min_l2 = np.inf
@@ -163,9 +162,9 @@ class PULSE(torch.nn.Module):
             # Normalize image to [0,1] instead of [-1,1]
             gen_im = (self.synthesis(latent_in, noise)+1)/2
 
-            gen_identity_vector = self.face_features_extractor.forward(gen_im)
+            # gen_identity_vector = self.face_features_extractor.forward(gen_im)
             # Calculate Losses
-            loss, loss_dict = loss_builder(latent_in, gen_im, gen_identity_vector)
+            loss, loss_dict = loss_builder(latent_in, gen_im)
             loss_dict['TOTAL'] = loss
 
             # Save best summary for log

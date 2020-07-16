@@ -90,7 +90,7 @@ class FaceComparerModule(LightningModule):
         return {'progress_bar': results, 'log': results, 'val_loss': results['val_loss']}
 
 
-def load_face_comparer_module(config_file_path):
+def load_face_comparer_module(config_file_path, opts=None, for_eval=False):
     with open(config_file_path) as fd:
         config = yaml.safe_load(fd)
     trainer_params = config['trainer_params']
@@ -101,15 +101,25 @@ def load_face_comparer_module(config_file_path):
     checkpoint_callback = ModelCheckpoint(**checkpoint_params)
     if checkpoint_callback.save_last:
         last_ckpt = os.path.join(checkpoint_callback.dirpath, checkpoint_callback.prefix + 'last.ckpt')
-    last_ckpt = last_ckpt if os.path.exists(last_ckpt) and not opts.force_restart else None
-    trainer = Trainer(gpus=[2],
-                      logger=False,
-                      fast_dev_run=False,
-                      checkpoint_callback=checkpoint_callback,
-                      resume_from_checkpoint=last_ckpt,
-                      **trainer_params)
+    force_restart = opts and opts.force_restart
+    last_ckpt = last_ckpt if os.path.exists(last_ckpt) and not force_restart else None
+    if for_eval:
+        if not last_ckpt:
+            raise Exception("for_eval=True requires checkpoint to exist")
+        net = FaceComparerModule.load_from_checkpoint(last_ckpt)
+        net.eval()
+        net.freeze()
+        trainer = None
+    else:
+        net = FaceComparerModule(**model_params)
+        trainer = Trainer(gpus=[torch.cuda.current_device()],
+                          logger=False,
+                          fast_dev_run=False,
+                          checkpoint_callback=checkpoint_callback,
+                          resume_from_checkpoint=last_ckpt,
+                          **trainer_params)
     #print(F'Trainer running at {trainer.logger.log_dir}')
-    net = FaceComparerModule(**model_params)
+
     return net, trainer
 
 
@@ -125,5 +135,5 @@ if __name__ == '__main__':
     torch.cuda.set_device(opts.gpu_id)
     os.environ['CUDA_VISIBLE_DEVICES'] = str(opts.gpu_id)
 
-    net, trainer = load_face_comparer_module(opts.config_file)
+    net, trainer = load_face_comparer_module(opts.config_file, opts=opts, for_eval=False)
     trainer.fit(net)
