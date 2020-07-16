@@ -89,25 +89,33 @@ if __name__ == '__main__':
     pairs_dataset = CelebAPairsDataset(large, same_ratio=0.5)
 
     # Test deltas between feature vector of different photos of same person
-    from bicubic import BicubicDownsampleTargetSize
-    from facenet_pytorch.models.inception_resnet_v1 import InceptionResnetV1
+    #from bicubic import BicubicDownsampleTargetSize
+    #from facenet_pytorch.models.inception_resnet_v1 import InceptionResnetV1
+    #downsample_to_160 = BicubicDownsampleTargetSize(160, True)
+    #inception_resnet = InceptionResnetV1(pretrained='vggface2', classify=False).eval()
+    #face_features_extractor = torch.nn.Sequential(downsample_to_160, inception_resnet)
 
-    downsample_to_160 = BicubicDownsampleTargetSize(160, True)
-    inception_resnet = InceptionResnetV1(pretrained='vggface2', classify=False).eval()
-    face_features_extractor = torch.nn.Sequential(downsample_to_160, inception_resnet)
+    from train_face_comparer import load_face_comparer_module
+    face_comparer_module, _ = load_face_comparer_module('configs/linear_basic.yml', for_eval=True)
+    face_features_extractor = face_comparer_module.face_comparer.face_features_extractor
 
-    def run_experiment(target_dataset, num_trials):
+    def run_experiment(target_dataset, num_trials, compare_feature_vectors_directly=True):
         same_person_deltas = []
         different_person_deltas = []
         for i in tqdm(range(num_trials)):
             p1, p2, is_different = target_dataset[i]
-            images = [p1, p2]
-            feature_vectors = [face_features_extractor(img.unsqueeze(0)) for img in images]
-            delta_feature = (feature_vectors[1] - feature_vectors[0]).abs().sum().item()
+            if compare_feature_vectors_directly:
+                images = [p1, p2]
+                feature_vectors = [face_features_extractor(img.unsqueeze(0)) for img in images]
+                delta_feature = (feature_vectors[1] - feature_vectors[0]).abs().sum().item()
+            else:
+                delta_feature = face_comparer_module.face_comparer.forward(p1.unsqueeze(0), p2.unsqueeze(0))
+                delta_feature = torch.sigmoid(delta_feature).mean(1).sum()
             if is_different:
                 different_person_deltas.append(delta_feature)
             else:
                 same_person_deltas.append(delta_feature)
+
         print(f"Number of experiments: {num_trials}")
         if len(same_person_deltas) > 0:
             m1 = np.mean(same_person_deltas)
@@ -123,6 +131,8 @@ if __name__ == '__main__':
             print(f"Cutoff training accuracy: {100 * cutoff_accuracy}")
 
 
+    run_experiment(pairs_dataset, 1000, compare_feature_vectors_directly=False)
+    print("Aligned Test complete (Full scorer)")
     run_experiment(pairs_dataset, 1000)
     print("Aligned Test complete")
 
@@ -141,10 +151,12 @@ if __name__ == '__main__':
     # toPIL(im1).save('im1.png')
     # toPIL(im2).save('im2.png')
 
-    run_experiment(adverserial_dataset_1, 1000)
+    #run_experiment(adverserial_dataset_1, 1000)
     print("Adverserial Test Complete")
-    run_experiment(adverserial_dataset_2, 1000)
+    run_experiment(adverserial_dataset_2, 3000)
     print("Adverserial With Identity Test Complete")
+    run_experiment(adverserial_dataset_2, 3000, compare_feature_vectors_directly=False)
+    print("Adverserial With Identity Test Complete (Full scorer test)")
 
 
 
