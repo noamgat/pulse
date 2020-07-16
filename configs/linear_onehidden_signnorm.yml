@@ -1,0 +1,9 @@
+trainer_params: {}
+model_params:
+  face_comparer_params:
+    hidden_dims: [512]
+    initial_bias: null
+    feature_normalization_mode: 1
+checkpoint_params:
+  save_last: True
+  filepath: 'saved_models/linear_onehidden_signnorm'

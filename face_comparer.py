@@ -23,13 +23,18 @@ def build_mlp(input_dim, hidden_dims, output_dim):
 
 
 class FaceComparer(torch.nn.Module):
-    def __init__(self, load_pretrained=True, hidden_dims=[], initial_bias=None):
+    FEATURE_NORMALIZATION_ABS = 0
+    FEATURE_NORMALIZATION_SIGN = 1
+    FEATURE_NORMALIZATION_SQUARE = 2
+
+    def __init__(self, load_pretrained=True, hidden_dims=[], initial_bias=None, feature_normalization_mode=FEATURE_NORMALIZATION_ABS):
         super(FaceComparer, self).__init__()
         downsample_to_160 = BicubicDownsampleTargetSize(160, True)
         pretrained_name = 'vggface2' if load_pretrained else None
         inception_resnet = InceptionResnetV1(pretrained=pretrained_name, classify=False).eval()
         self.face_features_extractor = torch.nn.Sequential(downsample_to_160, inception_resnet)
         self.tail = build_mlp(512, hidden_dims, 1)
+        self.feature_normalization_mode = feature_normalization_mode
         last_fc = self.tail[0]
         if initial_bias is not None:
             last_fc.weight.data = torch.ones_like(last_fc.weight.data)
@@ -49,8 +54,18 @@ class FaceComparer(torch.nn.Module):
         features_1 = self.extract_features(x_1)
         features_2 = self.extract_features(x_2)
         features_diff = features_1 - features_2
-        # TODO: ABS? Multiply by sign of first element? Square?
-        features_diff = abs(features_diff)
+
+        if self.feature_normalization_mode == self.FEATURE_NORMALIZATION_ABS:
+            features_diff = abs(features_diff)
+        elif self.feature_normalization_mode == self.FEATURE_NORMALIZATION_SQUARE:
+            features_diff = torch.pow(features_diff, 2)
+        elif self.feature_normalization_mode == self.FEATURE_NORMALIZATION_SIGN:
+            # Make sure the first element of every vector is non-negative - flip if negative
+            is_nonnegative = features_diff[:, 0] >= 0
+            sign_vector = ((is_nonnegative * 1) - 0.5) * 2
+            features_diff *= sign_vector.unsqueeze(0).T
+
+
         mlp_output = self.tail(features_diff)
         #mlp_output = mlp_output.squeeze(1)
         # decision = torch.sigmoid(mlp_output) #Using BCE loss, that will sigmoid

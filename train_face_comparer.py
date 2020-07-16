@@ -7,13 +7,13 @@ import pytorch_lightning as pl
 import yaml
 from pytorch_lightning import LightningModule, Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, ConcatDataset
 
-from celeba_aligned import build_aligned_celeba, CelebAPairsDataset
+from celeba_aligned import build_aligned_celeba, CelebAPairsDataset, CelebAAdverserialDataset
 from face_comparer import FaceComparer
 import torch
 import torch.nn.functional as F
-
+import numpy as np
 import pl_transfer_learning_helpers
 
 class FaceComparerModule(LightningModule):
@@ -22,6 +22,7 @@ class FaceComparerModule(LightningModule):
         super().__init__(*args, **kwargs)
         self.face_comparer = FaceComparer(True, **face_comparer_params)
         pl_transfer_learning_helpers.freeze(self.face_comparer.face_features_extractor, train_bn=False)
+        self.include_adverserial_faces = kwargs.pop('include_adverserial_faces', 0)
         #self.face_comparer.cuda()
         #self.device = self.face_comparer.tail[0].weight.device # TODO : Easiest way?
 
@@ -29,9 +30,17 @@ class FaceComparerModule(LightningModule):
         return self.face_comparer.forward(x1, x2)
 
     def get_dataloader(self, split='train', same_ratio=0.5, batch_size=16):
+        shuffle = split == 'train'
         large = build_aligned_celeba('CelebA_Raw', 'CelebA_large', split=split)
         pairs_dataset = CelebAPairsDataset(large, same_ratio=same_ratio, num_samples=10000)
-        return DataLoader(pairs_dataset, batch_size=batch_size, num_workers=2)
+        if not self.include_adverserial_faces:
+            return DataLoader(pairs_dataset, batch_size=batch_size, num_workers=2, shuffle=shuffle)
+        withidentity = build_aligned_celeba('CelebA_Raw', 'CelebA_withidentity', new_image_suffix='_0', split=split)
+        large_matching_withidentity = build_aligned_celeba('CelebA_Raw', 'CelebA_large',
+                                                           custom_indices=withidentity.filtered_indices, split=split)
+        adverserial_dataset = CelebAAdverserialDataset(withidentity, large_matching_withidentity)
+        concat_dataset = ConcatDataset([pairs_dataset, adverserial_dataset])
+        return DataLoader(concat_dataset, batch_size=batch_size, num_workers=2, shuffle=shuffle)
 
     @pl.data_loader
     def train_dataloader(self):
@@ -130,7 +139,11 @@ if __name__ == '__main__':
     parser.add_argument('-config_file', type=str, default='configs/linear_basic.yml', help='Config file')
     parser.add_argument('-force_restart', default=False, help='Start training from scratch even if exists', action='store_true')
     parser.add_argument('-gpu_id', default=2, type=int, help='Which gpu to use')
+    parser.add_argument('-seed', default=7652252, type=int, help='Random seed')
     opts = parser.parse_args()
+
+    torch.random.manual_seed(opts.seed)
+    np.random.seed(opts.seed)
 
     torch.cuda.set_device(opts.gpu_id)
     os.environ['CUDA_VISIBLE_DEVICES'] = str(opts.gpu_id)
