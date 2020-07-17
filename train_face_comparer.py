@@ -1,14 +1,18 @@
 import argparse
+import functools
 import os
 import sys
 from collections import OrderedDict
 
+import PIL.Image
 import pytorch_lightning as pl
+import torchvision
 import yaml
 from pytorch_lightning import LightningModule, Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint
 from torch.utils.data import DataLoader, ConcatDataset
 
+from bicubic import BicubicDownsampleTargetSize
 from celeba_aligned import build_aligned_celeba, CelebAPairsDataset, CelebAAdverserialDataset
 from face_comparer import FaceComparer
 import torch
@@ -19,10 +23,10 @@ import pl_transfer_learning_helpers
 class FaceComparerModule(LightningModule):
     def __init__(self, *args, **kwargs):
         face_comparer_params = kwargs.pop('face_comparer_params', {})
+        self.include_adverserial_faces = kwargs.pop('include_adverserial_faces', 0)
         super().__init__(*args, **kwargs)
         self.face_comparer = FaceComparer(True, **face_comparer_params)
         pl_transfer_learning_helpers.freeze(self.face_comparer.face_features_extractor, train_bn=False)
-        self.include_adverserial_faces = kwargs.pop('include_adverserial_faces', 0)
         #self.face_comparer.cuda()
         #self.device = self.face_comparer.tail[0].weight.device # TODO : Easiest way?
 
@@ -35,10 +39,15 @@ class FaceComparerModule(LightningModule):
         pairs_dataset = CelebAPairsDataset(large, same_ratio=same_ratio, num_samples=10000)
         if not self.include_adverserial_faces:
             return DataLoader(pairs_dataset, batch_size=batch_size, num_workers=2, shuffle=shuffle)
-        withidentity = build_aligned_celeba('CelebA_Raw', 'CelebA_withidentity', new_image_suffix='_0', split=split)
+
+        transform_func = functools.partial(BicubicDownsampleTargetSize.downsample_single, size=256, mode='area')
+        transform = torchvision.transforms.Lambda(transform_func)
+
+        withidentity = build_aligned_celeba('CelebA_Raw', 'CelebA_withidentity', new_image_suffix='_0', split=split, extra_transforms=[transform])
         large_matching_withidentity = build_aligned_celeba('CelebA_Raw', 'CelebA_large',
                                                            custom_indices=withidentity.filtered_indices, split=split)
         adverserial_dataset = CelebAAdverserialDataset(withidentity, large_matching_withidentity)
+        pairs_dataset = CelebAPairsDataset(large, same_ratio=same_ratio, num_samples=len(adverserial_dataset))
         concat_dataset = ConcatDataset([pairs_dataset, adverserial_dataset])
         return DataLoader(concat_dataset, batch_size=batch_size, num_workers=2, shuffle=shuffle)
 

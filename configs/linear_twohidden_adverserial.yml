@@ -1,0 +1,9 @@
+trainer_params: {}
+model_params:
+  include_adverserial_faces: 1
+  face_comparer_params:
+    hidden_dims: [1024, 512]
+    initial_bias: null
+checkpoint_params:
+  save_last: True
+  filepath: 'saved_models/linear_twohidden_adverserial'

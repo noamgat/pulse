@@ -9,12 +9,13 @@ import random
 from tqdm import tqdm
 
 
-def build_aligned_celeba(orig_celeba_folder, new_celeba_folder, split='all', new_image_suffix='', custom_indices=None):
+def build_aligned_celeba(orig_celeba_folder, new_celeba_folder, split='all', new_image_suffix='', custom_indices=None, extra_transforms=[]):
+    transform = torchvision.transforms.Compose([torchvision.transforms.ToTensor()] + extra_transforms)
     celeb_a = CelebA(root=orig_celeba_folder,
                      split=split,
                      download=False,
                      target_type='identity',
-                     transform=torchvision.transforms.ToTensor())
+                     transform=transform)
     celeb_a.root = new_celeba_folder
     celeb_a.filename = [f"{os.path.splitext(fn)[0]}_0{new_image_suffix}.png" for fn in celeb_a.filename]
     img_folder = os.path.join(new_celeba_folder, celeb_a.base_folder, "img_align_celeba")

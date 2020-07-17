@@ -119,3 +119,10 @@ class BicubicDownsampleTargetSize(nn.Module):
         if x.is_cuda: grid = grid.cuda()
         # do sampling
         return F.grid_sample(x, grid, mode=mode)
+
+    @staticmethod
+    def downsample_single(x, size=None, scale_factor=None, mode='nearest'):
+        x = x.unsqueeze(0)
+        x = BicubicDownsampleTargetSize.downsampling(x, size, scale_factor, mode)
+        x = x.squeeze(0)
+        return x
