@@ -24,11 +24,17 @@ class FaceComparerModule(LightningModule):
     def __init__(self, *args, **kwargs):
         face_comparer_params = kwargs.pop('face_comparer_params', {})
         self.include_adverserial_faces = kwargs.pop('include_adverserial_faces', 0)
+        self.milestones = kwargs.pop('milestones', [5, 10])
+        self.train_bn = kwargs.pop('train_bn', 0)
         super().__init__(*args, **kwargs)
         self.face_comparer = FaceComparer(True, **face_comparer_params)
-        pl_transfer_learning_helpers.freeze(self.face_comparer.face_features_extractor, train_bn=False)
+        pl_transfer_learning_helpers.freeze(self.feature_extractor, train_bn=self.train_bn)
         #self.face_comparer.cuda()
         #self.device = self.face_comparer.tail[0].weight.device # TODO : Easiest way?
+
+    @property
+    def feature_extractor(self):
+        return self.face_comparer.face_features_extractor[-1]
 
     def forward(self, x1, x2):
         return self.face_comparer.forward(x1, x2)
@@ -106,6 +112,34 @@ class FaceComparerModule(LightningModule):
         results = {'val_loss': val_loss_mean, 'val_acc': val_acc_mean}
         print(f"Epoch {self.current_epoch} Validation: Acc = {val_acc_mean.item()}, Loss = {val_loss_mean.item()}, B={self.face_comparer.tail[-1].bias.data.item()}")
         return {'progress_bar': results, 'log': results, 'val_loss': results['val_loss']}
+
+    def train(self, mode=True):
+        super().train(mode=mode)
+
+        if mode:
+            epoch = self.current_epoch
+            if epoch < self.milestones[0]:
+                # feature extractor is frozen (except for BatchNorm layers)
+                pl_transfer_learning_helpers.freeze(module=self.feature_extractor, train_bn=self.train_bn)
+
+            elif self.milestones[0] <= epoch < self.milestones[1]:
+                # Unfreeze last two layers of the feature extractor
+                pl_transfer_learning_helpers.freeze(module=self.feature_extractor, n=-2, train_bn=self.train_bn)
+
+    def on_epoch_start(self):
+        """Use `on_epoch_start` to unfreeze layers progressively."""
+        optimizer = self.trainer.optimizers[0]
+        if self.current_epoch == self.milestones[0]:
+            print("Hit first milestone, unfreezing last two layers")
+            pl_transfer_learning_helpers._unfreeze_and_add_param_group(module=self.feature_extractor[-2:],
+                                          optimizer=optimizer,
+                                          train_bn=self.train_bn)
+
+        elif self.current_epoch == self.milestones[1]:
+            print("Hit first milestone, unfreezing all layers")
+            pl_transfer_learning_helpers._unfreeze_and_add_param_group(module=self.feature_extractor[:-2],
+                                          optimizer=optimizer,
+                                          train_bn=self.train_bn)
 
 
 def load_face_comparer_module(config_file_path, opts=None, for_eval=False):
