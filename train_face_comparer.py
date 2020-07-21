@@ -10,6 +10,8 @@ import torchvision
 import yaml
 from pytorch_lightning import LightningModule, Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint
+from torch import optim
+from torch.optim.lr_scheduler import MultiStepLR
 from torch.utils.data import DataLoader, ConcatDataset
 
 from bicubic import BicubicDownsampleTargetSize
@@ -31,6 +33,8 @@ class FaceComparerModule(LightningModule):
         pl_transfer_learning_helpers.freeze(self.feature_extractor, train_bn=self.train_bn)
         #self.face_comparer.cuda()
         #self.device = self.face_comparer.tail[0].weight.device # TODO : Easiest way?
+        self.lr_scheduler_gamma = 1e-1
+        self.lr = 1e-2
 
     @property
     def feature_extractor(self):
@@ -131,15 +135,29 @@ class FaceComparerModule(LightningModule):
         optimizer = self.trainer.optimizers[0]
         if self.current_epoch == self.milestones[0]:
             print("Hit first milestone, unfreezing last two layers")
-            pl_transfer_learning_helpers._unfreeze_and_add_param_group(module=self.feature_extractor[-2:],
-                                          optimizer=optimizer,
-                                          train_bn=self.train_bn)
+            pl_transfer_learning_helpers.unfreeze(module=self.feature_extractor,
+                                                  optimizer=optimizer,
+                                                  train_bn=self.train_bn,
+                                                  start_n=-2)
 
         elif self.current_epoch == self.milestones[1]:
             print("Hit first milestone, unfreezing all layers")
-            pl_transfer_learning_helpers._unfreeze_and_add_param_group(module=self.feature_extractor[:-2],
+            pl_transfer_learning_helpers.unfreeze(
+                                          module=self.feature_extractor,
                                           optimizer=optimizer,
-                                          train_bn=self.train_bn)
+                                          train_bn=self.train_bn,
+                                          end_n=-2)
+
+    def configure_optimizers(self):
+        optimizer = optim.Adam(filter(lambda p: p.requires_grad,
+                                      self.parameters()),
+                               lr=self.lr)
+
+        scheduler = MultiStepLR(optimizer,
+                                milestones=self.milestones,
+                                gamma=self.lr_scheduler_gamma)
+
+        return [optimizer], [scheduler]
 
 
 def load_face_comparer_module(config_file_path, opts=None, for_eval=False):

@@ -95,3 +95,16 @@ def _unfreeze_and_add_param_group(module: Module,
          'lr': params_lr / 10.,
          })
 
+
+def unfreeze(module: Module,
+             optimizer: Optimizer,
+             lr: Optional[float] = None,
+             train_bn: bool = True,
+             start_n: Optional[int] = None,
+             end_n: Optional[int] = None):
+    children = list(module.children())
+    start_n = 0 if start_n is None else int(start_n)
+    end_n = len(children) if end_n is None else int(end_n)
+
+    for child in children[start_n:end_n]:
+        _unfreeze_and_add_param_group(module=child, optimizer=optimizer, lr=lr, train_bn=train_bn)
