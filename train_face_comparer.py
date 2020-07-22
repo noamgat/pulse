@@ -26,7 +26,7 @@ class FaceComparerModule(LightningModule):
     def __init__(self, *args, **kwargs):
         face_comparer_params = kwargs.pop('face_comparer_params', {})
         self.include_adverserial_faces = kwargs.pop('include_adverserial_faces', 0)
-        self.milestones = kwargs.pop('milestones', [5, 10])
+        self.milestones = kwargs.pop('milestones', [500000, 1000000])
         self.train_bn = kwargs.pop('train_bn', 0)
         super().__init__(*args, **kwargs)
         self.face_comparer = FaceComparer(True, **face_comparer_params)

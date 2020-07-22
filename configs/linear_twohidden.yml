@@ -3,6 +3,7 @@ model_params:
   face_comparer_params:
     hidden_dims: [1024, 512]
     initial_bias: null
+  milestones: [1, 2]
 checkpoint_params:
   save_last: True
   filepath: 'saved_models/linear_twohidden'

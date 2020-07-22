@@ -1,10 +1,9 @@
 trainer_params: {}
 model_params:
-  include_adverserial_faces: 1
   face_comparer_params:
     hidden_dims: []
     initial_bias: -21
-  milestones: [10, 200000]
+  milestones: [100, 200000]
 checkpoint_params:
   save_last: True
-  filepath: 'saved_models/linear_basic'
+  filepath: 'saved_models/linear_basic_modify_last_layers'
