@@ -29,7 +29,7 @@ class FaceComparerModule(LightningModule):
         self.milestones = kwargs.pop('milestones', [500000, 1000000])
         self.train_bn = kwargs.pop('train_bn', 0)
         super().__init__(*args, **kwargs)
-        self.face_comparer = FaceComparer(True, **face_comparer_params)
+        self.face_comparer = FaceComparer('facenet', True, **face_comparer_params)
         pl_transfer_learning_helpers.freeze(self.feature_extractor, train_bn=self.train_bn)
         #self.face_comparer.cuda()
         #self.device = self.face_comparer.tail[0].weight.device # TODO : Easiest way?

@@ -1,4 +1,5 @@
 from bicubic import BicubicDownsampleTargetSize
+from sphereface_pytorch.net_sphere import sphere20a
 from stylegan import G_synthesis,G_mapping
 from dataclasses import dataclass
 from SphericalOptimizer import SphericalOptimizer
@@ -26,14 +27,26 @@ class FaceComparer(torch.nn.Module):
     FEATURE_NORMALIZATION_ABS = 0
     FEATURE_NORMALIZATION_SIGN = 1
     FEATURE_NORMALIZATION_SQUARE = 2
+    FEATURE_NORMALIZATION_COS = 3
 
-    def __init__(self, load_pretrained=True, hidden_dims=[], initial_bias=None, feature_normalization_mode=FEATURE_NORMALIZATION_ABS):
+    def __init__(self, feature_extractor_model='facenet', load_pretrained=True, hidden_dims=[], initial_bias=None, feature_normalization_mode=FEATURE_NORMALIZATION_ABS):
         super(FaceComparer, self).__init__()
-        downsample_to_160 = BicubicDownsampleTargetSize(160, True)
-        pretrained_name = 'vggface2' if load_pretrained else None
-        inception_resnet = InceptionResnetV1(pretrained=pretrained_name, classify=False).eval()
-        self.face_features_extractor = torch.nn.Sequential(downsample_to_160, inception_resnet)
-        self.tail = build_mlp(512, hidden_dims, 1)
+        if feature_extractor_model == 'facenet':
+            downsample_to_160 = BicubicDownsampleTargetSize(160, True)
+            pretrained_name = 'vggface2' if load_pretrained else None
+            feature_extractor = InceptionResnetV1(pretrained=pretrained_name, classify=False)
+            self.face_features_extractor = torch.nn.Sequential(downsample_to_160, feature_extractor)
+        elif feature_extractor_model == 'sphereface':
+            feature_extractor = sphere20a(feature=True)
+            if load_pretrained:
+                feature_extractor.load_state_dict(torch.load('sphereface_pytorch/model/sphere20a_20171020.pth'))
+                feature_extractor.feature = True
+            downsample_to_128 = BicubicDownsampleTargetSize(128, True)
+            self.face_features_extractor = torch.nn.Sequential(downsample_to_128, feature_extractor)
+        else:
+            raise Exception(f"Invalid feature extractor model '{feature_extractor_model}'")
+        first_tail_dimension = 1 if feature_normalization_mode == self.FEATURE_NORMALIZATION_COS else 512
+        self.tail = build_mlp(first_tail_dimension, hidden_dims, 1)
         self.feature_normalization_mode = feature_normalization_mode
         last_fc = self.tail[0]
         if initial_bias is not None:
@@ -64,7 +77,11 @@ class FaceComparer(torch.nn.Module):
             is_nonnegative = features_diff[:, 0] >= 0
             sign_vector = ((is_nonnegative * 1) - 0.5) * 2
             features_diff *= sign_vector.unsqueeze(0).T
-
+        elif self.feature_normalization_mode == self.FEATURE_NORMALIZATION_COS:
+            f1 = features_1
+            f2 = features_2
+            cosdistance = f1.dot(f2) / (f1.norm(dim=0) * f2.norm(dim=0) + 1e-5)
+            features_diff = cosdistance
 
         mlp_output = self.tail(features_diff)
         #mlp_output = mlp_output.squeeze(1)
