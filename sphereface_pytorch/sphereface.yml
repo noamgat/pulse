@@ -1,0 +1,10 @@
+name: sphereface
+channels:
+  - pytorch
+  - defaults
+  - conda-forge
+dependencies:
+  - opencv
+  - pytorch
+  - python=3.7
+

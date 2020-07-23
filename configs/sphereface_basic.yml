@@ -1,0 +1,11 @@
+trainer_params: {}
+model_params:
+  face_comparer_params:
+    hidden_dims: []
+    initial_bias: -1
+    feature_extractor_model: 'sphereface'
+    feature_normalization_mode: 3
+  milestones: [100000, 200000]
+checkpoint_params:
+  save_last: True
+  filepath: 'saved_models/linear_basic'

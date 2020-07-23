@@ -41,8 +41,9 @@ class FaceComparer(torch.nn.Module):
             if load_pretrained:
                 feature_extractor.load_state_dict(torch.load('sphereface_pytorch/model/sphere20a_20171020.pth'))
                 feature_extractor.feature = True
-            downsample_to_128 = BicubicDownsampleTargetSize(128, True)
-            self.face_features_extractor = torch.nn.Sequential(downsample_to_128, feature_extractor)
+            downsample_to_128 = BicubicDownsampleTargetSize(112, True)
+            cropy = torch.nn.ReflectionPad2d((-8, -8, 0, 0))
+            self.face_features_extractor = torch.nn.Sequential(downsample_to_128, cropy, feature_extractor)
         else:
             raise Exception(f"Invalid feature extractor model '{feature_extractor_model}'")
         first_tail_dimension = 1 if feature_normalization_mode == self.FEATURE_NORMALIZATION_COS else 512
@@ -80,8 +81,13 @@ class FaceComparer(torch.nn.Module):
         elif self.feature_normalization_mode == self.FEATURE_NORMALIZATION_COS:
             f1 = features_1
             f2 = features_2
-            cosdistance = f1.dot(f2) / (f1.norm(dim=0) * f2.norm(dim=0) + 1e-5)
-            features_diff = cosdistance
+            # https://github.com/pytorch/pytorch/issues/18027 No batch dot product
+            dot_product = (f1 * f2).sum(-1)
+            normalized = (f1.norm(dim=1) * f2.norm(dim=1) + 1e-5)
+            cosdistance = dot_product / normalized
+            # Invert: 0 = Similar, 1 = Different (cos is 1=same)
+            features_diff = torch.ones_like(cosdistance) - cosdistance
+            features_diff = features_diff.unsqueeze(1)
 
         mlp_output = self.tail(features_diff)
         #mlp_output = mlp_output.squeeze(1)
