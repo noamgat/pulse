@@ -97,7 +97,8 @@ if __name__ == '__main__':
     #face_features_extractor = torch.nn.Sequential(downsample_to_160, inception_resnet)
 
     from train_face_comparer import load_face_comparer_module
-    face_comparer_module, _ = load_face_comparer_module('configs/linear_basic.yml', for_eval=True)
+    #face_comparer_module, _ = load_face_comparer_module('configs/linear_basic.yml', for_eval=True)
+    face_comparer_module, _ = load_face_comparer_module('configs/sphereface_basic.yml', for_eval=True)
     face_features_extractor = face_comparer_module.face_comparer.face_features_extractor
 
     def run_experiment(target_dataset, num_trials, compare_feature_vectors_directly=True):
@@ -132,10 +133,11 @@ if __name__ == '__main__':
             print(f"Cutoff training accuracy: {100 * cutoff_accuracy}")
 
 
+    run_experiment(pairs_dataset, 1000, compare_feature_vectors_directly=True)
+    print("Aligned Test complete")
     run_experiment(pairs_dataset, 1000, compare_feature_vectors_directly=False)
     print("Aligned Test complete (Full scorer)")
-    run_experiment(pairs_dataset, 1000)
-    print("Aligned Test complete")
+
 
     # Test prediction accuracy on adverserial dataset
     generated = build_aligned_celeba('CelebA_Raw', 'CelebA_generated', new_image_suffix='_0')

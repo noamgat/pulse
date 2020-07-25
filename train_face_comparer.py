@@ -23,8 +23,10 @@ import numpy as np
 import pl_transfer_learning_helpers
 
 class FaceComparerModule(LightningModule):
-    def __init__(self, *args, **kwargs):
-        face_comparer_params = kwargs.pop('face_comparer_params', {})
+    def __init__(self, *args, face_comparer_params=None, **kwargs):
+        args = args[1:]
+        face_comparer_params = face_comparer_params or {}
+        #face_comparer_params = kwargs.pop('face_comparer_params', {})
         face_comparer_params.setdefault('feature_extractor_model', 'facenet')
         face_comparer_params.setdefault('load_pretrained', True)
         self.include_adverserial_faces = kwargs.pop('include_adverserial_faces', 0)
@@ -178,7 +180,7 @@ def load_face_comparer_module(config_file_path, opts=None, for_eval=False):
     if for_eval:
         if not last_ckpt:
             raise Exception("for_eval=True requires checkpoint to exist")
-        net = FaceComparerModule.load_from_checkpoint(last_ckpt)
+        net = FaceComparerModule.load_from_checkpoint(last_ckpt, **model_params)
         net.eval()
         net.freeze()
         trainer = None

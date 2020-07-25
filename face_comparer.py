@@ -22,6 +22,12 @@ def build_mlp(input_dim, hidden_dims, output_dim):
             layers.append(torch.nn.ReLU())
     return torch.nn.Sequential(*layers)
 
+class LambdaLayer(torch.nn.Module):
+    def __init__(self, lambd):
+        super(LambdaLayer, self).__init__()
+        self.lambd = lambd
+    def forward(self, x):
+        return self.lambd(x)
 
 class FaceComparer(torch.nn.Module):
     FEATURE_NORMALIZATION_ABS = 0
@@ -43,7 +49,9 @@ class FaceComparer(torch.nn.Module):
                 feature_extractor.feature = True
             downsample_to_128 = BicubicDownsampleTargetSize(112, True)
             cropy = torch.nn.ReflectionPad2d((-8, -8, 0, 0))
-            self.face_features_extractor = torch.nn.Sequential(downsample_to_128, cropy, feature_extractor)
+            adjust_range = LambdaLayer(lambda x: (x - 0.5) * 2)
+            self.face_features_extractor = torch.nn.Sequential(downsample_to_128, cropy, adjust_range, feature_extractor)
+            #self.image_extractor = torch.nn.Sequential(downsample_to_128, cropy)
         else:
             raise Exception(f"Invalid feature extractor model '{feature_extractor_model}'")
         first_tail_dimension = 1 if feature_normalization_mode == self.FEATURE_NORMALIZATION_COS else 512
@@ -61,6 +69,7 @@ class FaceComparer(torch.nn.Module):
             return image_or_features
         else:
             # Channels: Batch Size, CHW
+            #images = self.image_extractor(image_or_features)
             return self.face_features_extractor(image_or_features)
 
     def forward(self, x_1, x_2):
@@ -85,8 +94,8 @@ class FaceComparer(torch.nn.Module):
             dot_product = (f1 * f2).sum(-1)
             normalized = (f1.norm(dim=1) * f2.norm(dim=1) + 1e-5)
             cosdistance = dot_product / normalized
-            # Invert: 0 = Similar, 1 = Different (cos is 1=same)
-            features_diff = torch.ones_like(cosdistance) - cosdistance
+            # Change from -1 (opposite) -> 1 (same) range to 0 (same) - 1 (different)
+            features_diff = (torch.ones_like(cosdistance) - cosdistance) / 2
             features_diff = features_diff.unsqueeze(1)
 
         mlp_output = self.tail(features_diff)
