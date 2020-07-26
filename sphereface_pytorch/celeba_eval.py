@@ -4,7 +4,11 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
+import torchvision
 from torch.autograd import Variable
+
+from celeba_aligned_copy import build_aligned_celeba, CelebAPairsDataset
+
 torch.backends.cudnn.bencmark = True
 
 import os,sys,cv2,random,datetime
@@ -27,11 +31,9 @@ def alignment(src_img,src_pts):
 
     tfm = get_similarity_transform_for_cv2(s, r)
     face_img = cv2.warpAffine(src_img, tfm, crop_size)
-    # NOAM TEST - CROP INSTEAD OF WARP
-    #src_img = src_img[20:-20, 20:-20, :]
-    #cropped_img = cv2.resize(src_img, (112, 112))
-    #cropped_img = cropped_img[:, 8:-8, :]
-    #return cropped_img
+    cropped_img = cv2.resize(src_img, (112, 112))
+    cropped_img = cropped_img[:, 8:-8, :]
+    return cropped_img
     return face_img
 
 
@@ -66,10 +68,10 @@ def find_best_threshold(thresholds, predicts):
     return best_threshold
 
 
-
 parser = argparse.ArgumentParser(description='PyTorch sphereface lfw')
 parser.add_argument('--net','-n', default='sphere20a', type=str)
-parser.add_argument('--lfw', default='../../dataset/face/lfw/lfw.zip', type=str)
+parser.add_argument('--celeba_orig', default='../CelebA_Raw', type=str)
+parser.add_argument('--celeba_new', default='../CelebA_large', type=str)
 parser.add_argument('--model','-m', default='sphere20a.pth', type=str)
 args = parser.parse_args()
 
@@ -80,51 +82,66 @@ net.cuda()
 net.eval()
 net.feature = True
 
-zfile = zipfile.ZipFile(args.lfw)
+# zfile = zipfile.ZipFile(args.lfw)
 
-landmark = {}
-with open('data/lfw_landmark.txt') as f:
-    landmark_lines = f.readlines()
-for line in landmark_lines:
-    l = line.replace('\n','').split('\t')
-    landmark[l[0]] = [int(k) for k in l[1:]]
-
-with open('data/pairs.txt') as f:
-    pairs_lines = f.readlines()[1:]
+# landmark = {}
+# with open('data/lfw_landmark.txt') as f:
+#     landmark_lines = f.readlines()
+# for line in landmark_lines:
+#     l = line.replace('\n','').split('\t')
+#     landmark[l[0]] = [int(k) for k in l[1:]]
+#
+# with open('data/pairs.txt') as f:
+#     pairs_lines = f.readlines()[1:]
 
 N = 6000
 
+celeba = build_aligned_celeba(args.celeba_orig, args.celeba_new)
+celeba_dataset = CelebAPairsDataset(celeba, num_samples=N)
+
 for i in range(N):
-    p = pairs_lines[i].replace('\n','').split('\t')
+    # p = pairs_lines[i].replace('\n','').split('\t')
+    #
+    # if 3==len(p):
+    #     sameflag = 1
+    #     name1 = p[0]+'/'+p[0]+'_'+'{:04}.jpg'.format(int(p[1]))
+    #     name2 = p[0]+'/'+p[0]+'_'+'{:04}.jpg'.format(int(p[2]))
+    # if 4==len(p):
+    #     sameflag = 0
+    #     name1 = p[0]+'/'+p[0]+'_'+'{:04}.jpg'.format(int(p[1]))
+    #     name2 = p[2]+'/'+p[2]+'_'+'{:04}.jpg'.format(int(p[3]))
+    #
+    # img1 = alignment(cv2.imdecode(np.frombuffer(zfile.read(name1),np.uint8),1),landmark[name1])
+    # img2 = alignment(cv2.imdecode(np.frombuffer(zfile.read(name2),np.uint8),1),landmark[name2])
 
-    if 3==len(p):
-        sameflag = 1
-        name1 = p[0]+'/'+p[0]+'_'+'{:04}.jpg'.format(int(p[1]))
-        name2 = p[0]+'/'+p[0]+'_'+'{:04}.jpg'.format(int(p[2]))
-    if 4==len(p):
-        sameflag = 0
-        name1 = p[0]+'/'+p[0]+'_'+'{:04}.jpg'.format(int(p[1]))
-        name2 = p[2]+'/'+p[2]+'_'+'{:04}.jpg'.format(int(p[3]))
-
-    img1 = alignment(cv2.imdecode(np.frombuffer(zfile.read(name1),np.uint8),1),landmark[name1])
-    img2 = alignment(cv2.imdecode(np.frombuffer(zfile.read(name2),np.uint8),1),landmark[name2])
-
+    img1, img2, is_different = celeba_dataset[i]
+    img1 = img1[:, :, 8:-8]
+    img2 = img2[:, :, 8:-8]
+    sameflag = 1 - is_different
     if i < 5:
-        cv2.imwrite('data/input%d_A.jpg' % i, img1)
-        cv2.imwrite('data/input%d_B.jpg' % i, img2)
+        toPIL = torchvision.transforms.ToPILImage()
+        # im1, im2, is_same = adverserial_dataset_1[99]
+        # toPIL(im1).save('im1.png')
+        toPIL(img1).save('data/input_celeba_%d_A.jpg' % i)
+        toPIL(img2).save('data/input_celeba_%d_B.jpg' % i)
 
-    imglist = [img1,cv2.flip(img1,1),img2,cv2.flip(img2,1)]
-    for i in range(len(imglist)):
-        imglist[i] = imglist[i].transpose(2, 0, 1).reshape((1,3,112,96))
-        imglist[i] = (imglist[i]-127.5)/128.0
+    #imglist = [img1,cv2.flip(img1,1),img2,cv2.flip(img2,1)]
+    #for i in range(len(imglist)):
+    #    imglist[i] = imglist[i].transpose(2, 0, 1).reshape((1,3,112,96))
+    #    imglist[i] = (imglist[i]-127.5)/128.0
 
-    img = np.vstack(imglist)
-    img = Variable(torch.from_numpy(img).float(),volatile=True).cuda()
+
+    #img = np.vstack(imglist)
+    img = torch.stack([img1, img2])
+    #img = img[:, :, 8:-8, :]
+    img = (img - 0.5) * 2
+    #img = Variable(torch.from_numpy(img).float(),volatile=True).cuda()
+    img = img.cuda()
     output = net(img)
     f = output.data
-    f1,f2 = f[0],f[2]
+    f1,f2 = f[0],f[1]
     cosdistance = f1.dot(f2)/(f1.norm()*f2.norm()+1e-5)
-    predicts.append('{}\t{}\t{}\t{}\n'.format(name1,name2,cosdistance,sameflag))
+    predicts.append('{}\t{}\t{}\t{}\n'.format(f'{i}_A',f'{i}_B',cosdistance,sameflag))
 
 
 accuracy = []
