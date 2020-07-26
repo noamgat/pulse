@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Created on Tue Jul 11 06:54:28 2017
 
@@ -63,7 +62,7 @@ function [trans, output] = findNonreflectiveSimilarity(uv,xy,options)
 %
 % Or rewriting the above matrix equation:
 % U = X * r, where r = [sc ss tx ty]'
-% so r = X\U.
+% so r = X
 %
 
 K = options.K;
@@ -284,7 +283,7 @@ def findNonreflectiveSimilarity(uv, xy, options=None):
     %
     % Or rewriting the above matrix equation:
     % U = X * r, where r = [sc ss tx ty]'
-    % so r = X\U.
+    % so r = X
     %
     """
     options = {'K': 2}
@@ -538,6 +537,7 @@ def get_similarity_transform_for_cv2(src_pts, dst_pts, reflective=True):
 
 
 if __name__ == '__main__':
+    print("HI")
     """
     u = [0, 6, -2]
     v = [0, 3, 5]

@@ -34,7 +34,7 @@ def KFold(n=6000, n_folds=10, shuffle=False):
     folds = []
     base = list(range(n))
     for i in range(n_folds):
-        test = base[i*n/n_folds:(i+1)*n/n_folds]
+        test = base[i*n//n_folds:(i+1)*n//n_folds]
         train = list(set(base)-set(test))
         folds.append([train,test])
     return folds
@@ -87,7 +87,9 @@ for line in landmark_lines:
 with open('data/pairs.txt') as f:
     pairs_lines = f.readlines()[1:]
 
-for i in range(6000):
+N = 6000
+
+for i in range(N):
     p = pairs_lines[i].replace('\n','').split('\t')
 
     if 3==len(p):
@@ -101,6 +103,10 @@ for i in range(6000):
 
     img1 = alignment(cv2.imdecode(np.frombuffer(zfile.read(name1),np.uint8),1),landmark[name1])
     img2 = alignment(cv2.imdecode(np.frombuffer(zfile.read(name2),np.uint8),1),landmark[name2])
+
+    if i < 5:
+        cv2.imwrite('data/input%d_A.jpg' % i, img1)
+        cv2.imwrite('data/input%d_B.jpg' % i, img2)
 
     imglist = [img1,cv2.flip(img1,1),img2,cv2.flip(img2,1)]
     for i in range(len(imglist)):
@@ -118,9 +124,9 @@ for i in range(6000):
 
 accuracy = []
 thd = []
-folds = KFold(n=6000, n_folds=10, shuffle=False)
+folds = KFold(n=N, n_folds=10, shuffle=False)
 thresholds = np.arange(-1.0, 1.0, 0.005)
-predicts = np.array(map(lambda line:line.strip('\n').split(), predicts))
+predicts = np.array(list(map(lambda line:line.strip('\n').split(), predicts)))
 for idx, (train, test) in enumerate(folds):
     best_thresh = find_best_threshold(thresholds, predicts[train])
     accuracy.append(eval_acc(best_thresh, predicts[test]))
