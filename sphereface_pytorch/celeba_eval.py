@@ -5,9 +5,12 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 import torchvision
+from PIL import Image
 from torch.autograd import Variable
+from tqdm import tqdm
 
 from celeba_aligned_copy import build_aligned_celeba, CelebAPairsDataset
+from mtcnn_pytorch.src.detector import detect_faces
 
 torch.backends.cudnn.bencmark = True
 
@@ -99,7 +102,38 @@ N = 6000
 celeba = build_aligned_celeba(args.celeba_orig, args.celeba_new)
 celeba_dataset = CelebAPairsDataset(celeba, num_samples=N)
 
-for i in range(N):
+def detect_landmarks(pil_im):
+    # mtcnn_pytorch
+    bounding_boxes, landmarks1_detected = detect_faces(pil_im)
+
+    #cv2_img = cv2.imdecode(np.frombuffer(zfile.read(imname), np.uint8), 1)
+    # mxnet
+    # mxnet_landmarks = mxnet_detector.detect_face(cv2_img)
+    # if mxnet_landmarks:
+    #    landmarks1_detected = mxnet_landmarks[1]
+    # caffe
+    #from mtcnn_caffe.demo import complete_detection
+    #caffe_landmarks = complete_detection(cv2_img, 'mtcnn_caffe/model')
+    #if caffe_landmarks and len(caffe_landmarks[1]) > 0:
+    #    landmarks1_detected = caffe_landmarks[1]
+
+    txt = [0] * 10
+    if landmarks1_detected is None or len(landmarks1_detected) == 0:
+        return None
+    mtcnn = landmarks1_detected[0]
+    txt[0] = mtcnn[0]
+    txt[1] = mtcnn[5]
+    txt[2] = mtcnn[1]
+    txt[3] = mtcnn[6]
+    txt[4] = mtcnn[2]
+    txt[5] = mtcnn[7]
+    txt[6] = mtcnn[3]
+    txt[7] = mtcnn[8]
+    txt[8] = mtcnn[4]
+    txt[9] = mtcnn[9]
+    return txt
+
+for i in tqdm(range(N)):
     # p = pairs_lines[i].replace('\n','').split('\t')
     #
     # if 3==len(p):
@@ -113,44 +147,55 @@ for i in range(N):
     #
     # img1 = alignment(cv2.imdecode(np.frombuffer(zfile.read(name1),np.uint8),1),landmark[name1])
     # img2 = alignment(cv2.imdecode(np.frombuffer(zfile.read(name2),np.uint8),1),landmark[name2])
-
+    toPIL = torchvision.transforms.ToPILImage()
     img1, img2, is_different = celeba_dataset[i]
-    img1 = img1[:, :, 8:-8]
-    img2 = img2[:, :, 8:-8]
+    # img1 = img1[:, :, 8:-8]
+    # img2 = img2[:, :, 8:-8]
+    pil_1 = toPIL(img1)
+    pil_2 = toPIL(img2)
     sameflag = 1 - is_different
     if i < 5:
-        toPIL = torchvision.transforms.ToPILImage()
+
         # im1, im2, is_same = adverserial_dataset_1[99]
         # toPIL(im1).save('im1.png')
-        toPIL(img1).save('data/input_celeba_%d_A.jpg' % i)
-        toPIL(img2).save('data/input_celeba_%d_B.jpg' % i)
+        pil_1.save('data/input_celeba_%d_A.jpg' % i)
+        pil_2.save('data/input_celeba_%d_B.jpg' % i)
 
     #imglist = [img1,cv2.flip(img1,1),img2,cv2.flip(img2,1)]
     #for i in range(len(imglist)):
     #    imglist[i] = imglist[i].transpose(2, 0, 1).reshape((1,3,112,96))
     #    imglist[i] = (imglist[i]-127.5)/128.0
-
-
+    landmarks_1 = detect_landmarks(pil_1)
+    landmarks_2 = detect_landmarks(pil_2)
+    if not (landmarks_1 and landmarks_2):
+        print("WAH")
+        continue
+    img1 = alignment(np.array(pil_1), landmarks_1)
+    img2 = alignment(np.array(pil_2), landmarks_2)
+    if i < 5:
+        Image.fromarray(img1).save('data/input_celeba_%d_A_aligned.jpg' % i)
+        Image.fromarray(img2).save('data/input_celeba_%d_B_aligned.jpg' % i)
     #img = np.vstack(imglist)
-    img = torch.stack([img1, img2])
+    toTensor = torchvision.transforms.ToTensor()
+    img = torch.stack([toTensor(img1), toTensor(img2)])
     #img = img[:, :, 8:-8, :]
     img = (img - 0.5) * 2
     #img = Variable(torch.from_numpy(img).float(),volatile=True).cuda()
     img = img.cuda()
     output = net(img)
     f = output.data
-    f1,f2 = f[0],f[1]
+    f1, f2 = f[0],f[1]
     cosdistance = f1.dot(f2)/(f1.norm()*f2.norm()+1e-5)
     predicts.append('{}\t{}\t{}\t{}\n'.format(f'{i}_A',f'{i}_B',cosdistance,sameflag))
 
 
 accuracy = []
 thd = []
-folds = KFold(n=N, n_folds=10, shuffle=False)
+folds = KFold(n=len(predicts), n_folds=10, shuffle=False)
 thresholds = np.arange(-1.0, 1.0, 0.005)
 predicts = np.array(list(map(lambda line:line.strip('\n').split(), predicts)))
 for idx, (train, test) in enumerate(folds):
     best_thresh = find_best_threshold(thresholds, predicts[train])
     accuracy.append(eval_acc(best_thresh, predicts[test]))
     thd.append(best_thresh)
-print('LFWACC={:.4f} std={:.4f} thd={:.4f}'.format(np.mean(accuracy), np.std(accuracy), np.mean(thd)))
+print('CELEBAACC={:.4f} std={:.4f} thd={:.4f}'.format(np.mean(accuracy), np.std(accuracy), np.mean(thd)))

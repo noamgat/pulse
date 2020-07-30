@@ -10,7 +10,7 @@ from tqdm import tqdm
 
 
 def build_aligned_celeba(orig_celeba_folder, new_celeba_folder, split='all', new_image_suffix='', custom_indices=None, extra_transforms=[]):
-    transform = torchvision.transforms.Compose([torchvision.transforms.Resize(112), torchvision.transforms.ToTensor()] + extra_transforms)
+    transform = torchvision.transforms.Compose([torchvision.transforms.ToTensor()] + extra_transforms)
     celeb_a = CelebA(root=orig_celeba_folder,
                      split=split,
                      download=False,
