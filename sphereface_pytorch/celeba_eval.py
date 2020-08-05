@@ -1,27 +1,28 @@
 from __future__ import print_function
 
 import torch
-import torch.nn as nn
-import torch.optim as optim
-import torch.nn.functional as F
 import torchvision
 from PIL import Image
-from torch.autograd import Variable
 from tqdm import tqdm
 
+from InsightFace_v2.utils import get_central_face_attributes_img
 from celeba_aligned_copy import build_aligned_celeba, CelebAPairsDataset
 from mtcnn_pytorch.src.detector import detect_faces
 
 torch.backends.cudnn.bencmark = True
 
-import os,sys,cv2,random,datetime
+import cv2
 import argparse
 import numpy as np
-import zipfile
 
-from dataset import ImageDataset
 from matlab_cp2tform import get_similarity_transform_for_cv2
 import net_sphere
+
+# mxnet
+import mxnet as mx
+from mxnet_mtcnn_face_detection.mtcnn_detector import MtcnnDetector
+mxnet_detector = MtcnnDetector(model_folder='mxnet_mtcnn_face_detection/model', ctx=mx.cpu(0), num_worker=4, accurate_landmark=True)
+
 
 def alignment(src_img,src_pts):
     ref_pts = [ [30.2946, 51.6963],[65.5318, 51.5014],
@@ -106,13 +107,17 @@ def detect_landmarks(pil_im):
     # mtcnn_pytorch
     bounding_boxes, landmarks1_detected = detect_faces(pil_im)
 
-    #cv2_img = cv2.imdecode(np.frombuffer(zfile.read(imname), np.uint8), 1)
+    cv2_img = np.array(pil_im)
+
+    central_boxes, central_landmarks = get_central_face_attributes_img(cv2_img)
+    if bounding_boxes is not None:
+        landmarks1_detected = central_landmarks
     # mxnet
-    # mxnet_landmarks = mxnet_detector.detect_face(cv2_img)
-    # if mxnet_landmarks:
+    #mxnet_landmarks = mxnet_detector.detect_face(cv2_img)
+    #if mxnet_landmarks:
     #    landmarks1_detected = mxnet_landmarks[1]
     # caffe
-    #from mtcnn_caffe.demo import complete_detection
+    #
     #caffe_landmarks = complete_detection(cv2_img, 'mtcnn_caffe/model')
     #if caffe_landmarks and len(caffe_landmarks[1]) > 0:
     #    landmarks1_detected = caffe_landmarks[1]

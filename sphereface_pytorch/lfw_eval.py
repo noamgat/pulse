@@ -1,26 +1,21 @@
 from __future__ import print_function
 
 import torch
-import torch.nn as nn
-import torch.optim as optim
-import torch.nn.functional as F
 from PIL import Image
 from torch.autograd import Variable
 from tqdm import tqdm
 
-from celeba_aligned_copy import build_aligned_celeba
 from mtcnn_pytorch.src.utils import show_bboxes
 
 
 torch.backends.cudnn.bencmark = True
 
-import os,sys,cv2,random,datetime
+import cv2
 import argparse
 import numpy as np
 import zipfile
 from mtcnn_pytorch.src.detector import detect_faces
 
-from dataset import ImageDataset
 from matlab_cp2tform import get_similarity_transform_for_cv2
 import net_sphere
 
@@ -28,6 +23,8 @@ import net_sphere
 import mxnet as mx
 from mxnet_mtcnn_face_detection.mtcnn_detector import MtcnnDetector
 mxnet_detector = MtcnnDetector(model_folder='mxnet_mtcnn_face_detection/model', ctx=mx.cpu(0), num_worker=4, accurate_landmark=True)
+
+from InsightFace_v2.utils import get_central_face_attributes_img
 
 def alignment(src_img,src_pts):
     ref_pts = [ [30.2946, 51.6963],[65.5318, 51.5014],
@@ -122,24 +119,32 @@ for i in tqdm(range(N)):
     # NOAM: Landmark extraction test
     loaded_landmarks = []
     calculated_landmarks = []
+    cv_img1 = cv2.imdecode(np.frombuffer(zfile.read(name1), np.uint8), 1)
+    cv_img2 = cv2.imdecode(np.frombuffer(zfile.read(name2), np.uint8), 1)
+    cv_imgs = [cv_img1, cv_img2]
+
     for j, imname in enumerate([name1, name2]):
         loaded_landmarks.append(landmark[imname])
+
+
 
         raw_img_1 = Image.open(zfile.open(imname))
         #mtcnn_pytorch
         bounding_boxes, landmarks1_detected = detect_faces(raw_img_1)
 
-
-        cv2_img = cv2.imdecode(np.frombuffer(zfile.read(imname), np.uint8), 1)
+        central_boxes, central_landmarks = get_central_face_attributes_img(cv_imgs[j])
+        if bounding_boxes is not None:
+            landmarks1_detected = central_landmarks
+        #cv2_img = cv2.imdecode(np.frombuffer(zfile.read(imname), np.uint8), 1)
         # mxnet
         #mxnet_landmarks = mxnet_detector.detect_face(cv2_img)
         #if mxnet_landmarks:
         #    landmarks1_detected = mxnet_landmarks[1]
         # caffe
-        from mtcnn_caffe.demo import complete_detection
-        caffe_landmarks = complete_detection(cv2_img, 'mtcnn_caffe/model')
-        if caffe_landmarks and len(caffe_landmarks[1]) > 0:
-            landmarks1_detected = caffe_landmarks[1]
+        #from mtcnn_caffe.demo import complete_detection
+        #caffe_landmarks = complete_detection(cv2_img, 'mtcnn_caffe/model')
+        #if caffe_landmarks and len(caffe_landmarks[1]) > 0:
+        #    landmarks1_detected = caffe_landmarks[1]
 
         txt = [0] * 10
         mtcnn = landmarks1_detected[0]
@@ -164,14 +169,15 @@ for i in tqdm(range(N)):
             original_annotations.save('data/annotation_%d_%d_orig.png' % (i, j))
 
 
-            mxnet_image = show_bboxes(raw_img_1, mxnet_landmarks[0], mxnet_landmarks[1])
-            mxnet_image.save('data/annotation_%d_%d_mxnet.png' % (i, j))
-            caffe_image = show_bboxes(raw_img_1, caffe_landmarks[0], caffe_landmarks[1])
-            caffe_image.save('data/annotation_%d_%d_caffe.png' % (i, j))
+            #mxnet_image = show_bboxes(raw_img_1, mxnet_landmarks[0], mxnet_landmarks[1])
+            #mxnet_image.save('data/annotation_%d_%d_mxnet.png' % (i, j))
+            #caffe_image = show_bboxes(raw_img_1, caffe_landmarks[0], caffe_landmarks[1])
+            #caffe_image.save('data/annotation_%d_%d_caffe.png' % (i, j))
 
     used_landmarks = calculated_landmarks  # loaded_landmarks or calculated landmarkss
-    img1 = alignment(cv2.imdecode(np.frombuffer(zfile.read(name1),np.uint8),1),used_landmarks[0])
-    img2 = alignment(cv2.imdecode(np.frombuffer(zfile.read(name2),np.uint8),1),used_landmarks[1])
+
+    img1 = alignment(cv_img1,used_landmarks[0])
+    img2 = alignment(cv_img2,used_landmarks[1])
 
     if i < 5:
         cv2.imwrite('data/input%d_A.jpg' % i, img1)

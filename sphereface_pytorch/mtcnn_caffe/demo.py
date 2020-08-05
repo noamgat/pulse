@@ -505,20 +505,28 @@ def haveFace(img, facedetector):
     containFace = (True, False)[boundingboxes.shape[0]==0]
     return containFace, boundingboxes
 
+_PNet = None
+_RNet = None
+_ONet = None
+
 def complete_detection(img, caffe_model_path = "./model"):
     threshold = [0.6, 0.7, 0.7]
     factor = 0.709
     minsize = 20
     caffe.set_mode_cpu()
-    PNet = caffe.Net(caffe_model_path + "/det1.prototxt", caffe_model_path + "/det1.caffemodel", caffe.TEST)
-    RNet = caffe.Net(caffe_model_path + "/det2.prototxt", caffe_model_path + "/det2.caffemodel", caffe.TEST)
-    ONet = caffe.Net(caffe_model_path + "/det3.prototxt", caffe_model_path + "/det3.caffemodel", caffe.TEST)
+    global _PNet
+    global _RNet
+    global _ONet
+    if not _PNet:
+        _PNet = caffe.Net(caffe_model_path + "/det1.prototxt", caffe_model_path + "/det1.caffemodel", caffe.TEST)
+        _RNet = caffe.Net(caffe_model_path + "/det2.prototxt", caffe_model_path + "/det2.caffemodel", caffe.TEST)
+        _ONet = caffe.Net(caffe_model_path + "/det3.prototxt", caffe_model_path + "/det3.caffemodel", caffe.TEST)
 
     img_matlab = img.copy()
     tmp = img_matlab[:, :, 2].copy()
     img_matlab[:, :, 2] = img_matlab[:, :, 0]
     img_matlab[:, :, 0] = tmp
-    boundingboxes, points = detect_face(img_matlab, minsize, PNet, RNet, ONet, threshold, False, factor)
+    boundingboxes, points = detect_face(img_matlab, minsize, _PNet, _RNet, _ONet, threshold, False, factor)
     return boundingboxes, points
 
 def main():
