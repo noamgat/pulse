@@ -10,19 +10,48 @@ import scipy.stats
 import torch
 from PIL import Image
 from matplotlib import pyplot as plt
+from torchvision.datasets import CelebA
 from tqdm import tqdm
 
-from celeba_aligned_copy import build_aligned_celeba, CelebAPairsDataset
+from celeba_aligned_copy import build_aligned_celeba, CelebAPairsDataset, CelebAAdverserialDataset
 from config import device
 from data_gen import data_transforms
 from utils import align_face, get_central_face_attributes, get_all_face_attributes, draw_bboxes
 
-angles_file = 'data/celeba_angles.txt'
-lfw_pickle = 'data/celeba_funneled.pkl'
-test_pair_file = 'data/celeba_test_pair.txt'
+normal_angles_file = 'data/celeba_angles.txt'
+normal_lfw_pickle = 'data/celeba_funneled.pkl'
+normal_test_pair_file = 'data/celeba_test_pair.txt'
 
 N = 6000
-celeba = build_aligned_celeba('../CelebA_Raw', '../CelebA_large')
+celeba_raw = build_aligned_celeba('../CelebA_Raw', '../CelebA_large')
+celeba_orig = CelebA(root='../CelebA_Raw', split='all', download=False, target_type='identity')
+celeba = celeba_orig
+
+generated_suffix = 'withidentity'  # can also be 'generated'
+generated = build_aligned_celeba('../CelebA_Raw', f'../CelebA_{generated_suffix}', new_image_suffix='_0')
+large_matching_generated = build_aligned_celeba('../CelebA_Raw', '../CelebA_large', custom_indices=generated.filtered_indices)
+adverserial_dataset_1 = CelebAAdverserialDataset(generated, large_matching_generated, return_indices=True)
+
+adverserial_pickle = 'data/celeba_adverserial_funneled.pkl'
+adverserial_test_pair_file = 'data/celeba_adverserial_test_pair.txt'
+adverserial_angles_file = 'data/celeba_adverserial_angles.txt'
+
+angles_file = normal_angles_file
+lfw_pickle = normal_lfw_pickle
+test_pair_file = normal_test_pair_file
+is_adverserial = False
+
+def set_is_adverserial(is_adverserial_flag):
+    global angles_file
+    global lfw_pickle
+    global test_pair_file
+    global is_adverserial
+    global celeba
+    is_adverserial = is_adverserial_flag
+    angles_file = adverserial_angles_file if is_adverserial else normal_angles_file
+    lfw_pickle = adverserial_pickle if is_adverserial else normal_lfw_pickle
+    test_pair_file = adverserial_test_pair_file if is_adverserial else normal_test_pair_file
+    celeba = generated if is_adverserial else celeba_orig
 
 
 def extract(filename):
@@ -30,38 +59,42 @@ def extract(filename):
         tar.extractall('data')
 
 
-def process():
+celeba_dataset = CelebAPairsDataset(celeba, num_samples=N, return_indices=True)
 
-
-    celeba_dataset = CelebAPairsDataset(celeba, num_samples=N, return_indices=True)
+def process(data_source, data_set, output_test_pair_file, output_pickle_file):
     lines = []
+    data_sources = set()
     for i in tqdm(range(N)):
-        idx1, idx2, is_different = celeba_dataset[i]
-        file1 = celeba.filename[idx1]
-        file2 = celeba.filename[idx2]
+        (data_source_1, idx1), (data_source_2, idx2), is_different = data_set[i]
+        data_sources.add(data_source_1)
+        data_sources.add(data_source_2)
+        file1 = data_source_1.filename[idx1]
+        file2 = data_source_2.filename[idx2]
         is_same = 1 - is_different
-        is_same_check = int(celeba.identity[idx1] == celeba.identity[idx2])
+        is_same_check = int(data_source_1.identity[idx1] == data_source_2.identity[idx2] and data_source_1 == data_source_2)
         assert is_same == is_same_check, "Bad is_same flag"
         line = f"{file1} {file2} {is_same}"
         lines.append(line)
-    with open(test_pair_file, 'w') as file:
+    with open(output_test_pair_file, 'w') as file:
         file.write("\r\n".join(lines))
 
-    subjects = list(range(1, celeba.identity.max().item()+1))
-    assert (len(subjects) == 10177), "Number of subjects is: {}!".format(len(subjects))
-
     file_names = []
-    images = np.array(range(len(celeba.filename)))
-    for i in tqdm(range(len(subjects))):
-        sub = subjects[i]
-        indices = images[(celeba.identity == sub).squeeze()]
-        folder = os.path.join(celeba.root, celeba.base_folder, 'img_align_celeba')
-        files = np.array(celeba.filename)[indices]
-        for file in files:
-            filename = os.path.join(folder, file)
-            file_names.append({'filename': filename, 'class_id': i, 'subject': sub})
 
-    assert (len(file_names) == 197016), "Number of files is: {}!".format(len(file_names))
+    for data_source in data_sources:
+        subjects = list(range(1, data_source.identity.max().item() + 1))
+        # assert (len(subjects) == 10177), "Number of subjects is: {}!".format(len(subjects))
+        images = np.array(range(len(data_source.filename)))
+        for i in tqdm(range(len(subjects))):
+            sub = subjects[i]
+            indices = images[(data_source.identity == sub).squeeze()]
+            folder = os.path.join(data_source.root, data_source.base_folder, 'img_align_celeba')
+            files = np.array(data_source.filename)[indices]
+            for file in files:
+                filename = os.path.join(folder, file)
+                file_names.append({'filename': filename, 'class_id': i, 'subject': sub})
+
+    #197016 / 202599
+    #assert (len(file_names) == 202599), "Number of files is: {}!".format(len(file_names))
 
 
 
@@ -82,7 +115,7 @@ def process():
         except Exception as err:
             print(err)
 
-    with open(lfw_pickle, 'wb') as file:
+    with open(output_pickle_file, 'wb') as file:
         save = {
             'samples': samples
         }
@@ -226,6 +259,14 @@ def accuracy(threshold):
     return accuracy
 
 
+def adverserial_accuracy(threshold):
+    ds1 = generated
+    ds2 = large_matching_generated
+    for i in range(N):
+        filename1 = ds1[i].filename
+        filename2 = ds2[i].filename
+
+
 def show_bboxes(folder):
     with open(lfw_pickle, 'rb') as file:
         data = pickle.load(file)
@@ -263,45 +304,61 @@ def error_analysis(threshold):
     num_fp = len(fp)
     num_fn = len(fn)
 
+    with open(lfw_pickle, 'rb') as file:
+        data = pickle.load(file)
+    samples = data['samples']
+
     filename = test_pair_file
     with open(filename, 'r') as file:
         pair_lines = file.readlines()
 
-    for i in range(num_fp):
+    for i in tqdm(range(num_fp)):
         fp_id = fp[i]
         fp_line = pair_lines[fp_id]
         tokens = fp_line.split()
         file0 = tokens[0]
-        copy_file(file0, '{}_celeba_fp_0.jpg'.format(i))
-        save_aligned(file0, '{}_celeba_fp_0_aligned.jpg'.format(i))
+        copy_file(samples, file0, '{}_celeba_fp_0.jpg'.format(i))
+        save_aligned(samples, file0, '{}_celeba_fp_0_aligned.jpg'.format(i))
         file1 = tokens[1]
-        copy_file(file1, '{}_celeba_fp_1.jpg'.format(i))
-        save_aligned(file1, '{}_celeba_fp_1_aligned.jpg'.format(i))
+        copy_file(samples, file1, '{}_celeba_fp_1.jpg'.format(i))
+        save_aligned(samples, file1, '{}_celeba_fp_1_aligned.jpg'.format(i))
 
-    for i in range(num_fn):
+    for i in tqdm(range(num_fn)):
         fn_id = fn[i]
         fn_line = pair_lines[fn_id]
         tokens = fn_line.split()
         file0 = tokens[0]
-        copy_file(file0, '{}_celeba_fn_0.jpg'.format(i))
-        save_aligned(file0, '{}_celeba_fn_0_aligned.jpg'.format(i))
+        copy_file(samples, file0, '{}_celeba_fn_0.jpg'.format(i))
+        save_aligned(samples, file0, '{}_celeba_fn_0_aligned.jpg'.format(i))
         file1 = tokens[1]
-        copy_file(file1, '{}_celeba_fn_1.jpg'.format(i))
-        save_aligned(file1, '{}_celeba_fn_1_aligned.jpg'.format(i))
+        copy_file(samples, file1, '{}_celeba_fn_1.jpg'.format(i))
+        save_aligned(samples, file1, '{}_celeba_fn_1_aligned.jpg'.format(i))
 
 
-def save_aligned(old_fn, new_fn):
-    folder = os.path.join(celeba.root, celeba.base_folder, 'img_align_celeba')
-    old_fn = os.path.join(folder, old_fn)
+def save_aligned(samples, old_fn, new_fn):
+    # folder = os.path.join(celeba.root, celeba.base_folder, 'img_align_celeba')
+    # old_fn = os.path.join(folder, old)
+
+    filtered = [sample for sample in samples if old_fn in sample['full_path'].replace('\\', '/')]
+    assert (len(filtered) == 1), 'len(filtered): {} file:{}'.format(len(filtered), old_fn)
+    sample = filtered[0]
+    old_fn = sample['full_path']
+
     _, landmarks = get_central_face_attributes(old_fn)
     img = align_face(old_fn, landmarks)
     new_fn = os.path.join('images', new_fn)
     cv.imwrite(new_fn, img)
 
 
-def copy_file(old, new):
-    folder = os.path.join(celeba.root, celeba.base_folder, 'img_align_celeba')
-    old_fn = os.path.join(folder, old)
+def copy_file(samples, old, new):
+    #folder = os.path.join(celeba.root, celeba.base_folder, 'img_align_celeba')
+    #old_fn = os.path.join(folder, old)
+
+    filtered = [sample for sample in samples if old in sample['full_path'].replace('\\', '/')]
+    assert (len(filtered) == 1), 'len(filtered): {} file:{}'.format(len(filtered), old)
+    sample = filtered[0]
+    old_fn = sample['full_path']
+
     img = cv.imread(old_fn)
     bboxes, landmarks = get_all_face_attributes(old_fn)
     draw_bboxes(img, bboxes, landmarks)
@@ -346,11 +403,26 @@ def lfw_test(model):
 
     if not os.path.isfile(lfw_pickle):
         print('Processing {}...'.format(lfw_pickle))
-        process()
+        process(celeba, celeba_dataset, test_pair_file, lfw_pickle)
 
-    # if not os.path.isfile(angles_file):
-    print('Evaluating {}...'.format(angles_file))
-    evaluate(model)
+    if not os.path.isfile(adverserial_pickle):
+        print('Processing {}...'.format(adverserial_pickle))
+        process(large_matching_generated, adverserial_dataset_1, adverserial_test_pair_file, adverserial_pickle)
+
+    #raise Exception("Early exit")
+
+    if not os.path.isfile(angles_file):
+        print('Evaluating {}...'.format(angles_file))
+        evaluate(model)
+
+    set_is_adverserial(True)
+    if not os.path.isfile(angles_file):
+        print('Evaluating {}...'.format(angles_file))
+        evaluate(model)
+
+    set_is_adverserial(False)
+
+    # raise Exception("Early exit")
 
     print('Calculating threshold...')
     # threshold = 70.36
@@ -358,11 +430,17 @@ def lfw_test(model):
     print('Calculating accuracy...')
     acc = accuracy(thres)
     print('Accuracy: {}%, threshold: {}'.format(acc * 100, thres))
+
+    set_is_adverserial(True)
+    print('Calculating Adverserial accuracy...')
+    acc = accuracy(thres)
+    print('Adverserial Accuracy: {}%, threshold: {}'.format(acc * 100, thres))
+
     return acc, thres
 
 
 if __name__ == "__main__":
-    checkpoint = 'pretrained/BEST_checkpoint_r18.tar'
+    checkpoint = 'pretrained/BEST_checkpoint_r101.tar'
     checkpoint = torch.load(checkpoint)
     model = checkpoint['model'].module
     model = model.to(device)
@@ -375,3 +453,7 @@ if __name__ == "__main__":
 
     print('error analysis...')
     error_analysis(threshold)
+
+
+
+

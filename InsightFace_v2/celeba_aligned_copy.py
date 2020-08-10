@@ -69,17 +69,18 @@ class CelebAPairsDataset(Dataset):
             idx1, = np.random.choice(self.identity_dicts[identities[0]], 1)
             idx2, = np.random.choice(self.identity_dicts[identities[1]], 1)
         if self.return_indices:
-            return idx1, idx2, 0 if is_same else 1
+            return (self.celeb_a, idx1), (self.celeb_a, idx2), 0 if is_same else 1
         else:
             return self.celeb_a[idx1][0], self.celeb_a[idx2][0], 0 if is_same else 1
 
 
 
 class CelebAAdverserialDataset(Dataset):
-    def __init__(self, celeb_a_1: CelebA, celeb_a_2: CelebA,):
+    def __init__(self, celeb_a_1: CelebA, celeb_a_2: CelebA, return_indices=False):
         super(CelebAAdverserialDataset, self).__init__()
         self.celeb_a_1 = celeb_a_1
         self.celeb_a_2 = celeb_a_2
+        self.return_indices = return_indices
         assert len(self.celeb_a_1) == len(self.celeb_a_2)
 
     def __len__(self):
@@ -87,7 +88,10 @@ class CelebAAdverserialDataset(Dataset):
 
     def __getitem__(self, item):
         is_same = False
-        return self.celeb_a_1[item][0], self.celeb_a_2[item][0], 0 if is_same else 1
+        if self.return_indices:
+            return (self.celeb_a_1, item), (self.celeb_a_2, item), 0 if is_same else 1
+        else:
+            return self.celeb_a_1[item][0], self.celeb_a_2[item][0], 0 if is_same else 1
 
 if __name__ == '__main__':
     large = build_aligned_celeba('CelebA_Raw', 'CelebA_large')
