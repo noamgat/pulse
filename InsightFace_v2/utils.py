@@ -191,6 +191,7 @@ def parse_args():
     parser.add_argument('--use-se', type=bool, default=False, help='use SEBlock')
     parser.add_argument('--full-log', type=bool, default=False, help='full logging')
     parser.add_argument('--checkpoint', type=str, default=None, help='checkpoint')
+    parser.add_argument('--adverserial', help='Use adverserial training epochs', action='store_true')
     args = parser.parse_args()
     return args
 
