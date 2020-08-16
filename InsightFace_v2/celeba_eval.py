@@ -126,6 +126,9 @@ def process(data_source, data_set, output_test_pair_file, output_pickle_file):
 
 def get_image(samples, transformer, file):
     filtered = [sample for sample in samples if file in sample['full_path'].replace('\\', '/')]
+    if len(filtered) != 1:
+        print(f"Image {file} can't be found (filtered = {len(filtered)})")
+        return None
     assert (len(filtered) == 1), 'len(filtered): {} file:{}'.format(len(filtered), file)
     sample = filtered[0]
     full_path = sample['full_path']

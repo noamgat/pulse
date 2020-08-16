@@ -7,7 +7,7 @@ from torch import nn
 from torch.utils.tensorboard import SummaryWriter
 
 from config import device, grad_clip, print_freq
-from data_gen import ArcFaceDataset
+from data_gen import ArcFaceDataset, AdverserialFaceDataset
 from focal_loss import FocalLoss
 from lfw_eval import lfw_test
 from models import resnet18, resnet34, resnet50, resnet101, resnet152, ArcMarginModel
@@ -67,8 +67,8 @@ def train_net(args):
         checkpoint = torch.load(checkpoint)
         start_epoch = checkpoint['epoch'] + 1
         epochs_since_improvement = checkpoint['epochs_since_improvement']
-        model = checkpoint['model']
-        metric_fc = checkpoint['metric_fc']
+        model = checkpoint['model'].module
+        metric_fc = checkpoint['metric_fc'].module
         optimizer = checkpoint['optimizer']
 
     logger = get_logger()
@@ -85,11 +85,17 @@ def train_net(args):
 
     # Custom dataloaders
     train_dataset = ArcFaceDataset('train')
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
+    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=0)
+
+    adv_dataset = AdverserialFaceDataset('train')
+    adv_loader = torch.utils.data.DataLoader(adv_dataset, batch_size=args.batch_size//2, shuffle=True, num_workers=0)
+    adv_criterion = nn.BCEWithLogitsLoss().to(device)
 
     # Epochs
     for epoch in range(start_epoch, args.end_epoch):
         # One epoch's training
+
+        # Standard epoch
         train_loss, train_acc = train(train_loader=train_loader,
                                       model=model,
                                       metric_fc=metric_fc,
@@ -105,8 +111,38 @@ def train_net(args):
 
         # One epoch's validation
         lfw_acc, threshold = lfw_test(model)
+        # lfw_acc, threshold = 0, 75
+
         writer.add_scalar('model/valid_acc', lfw_acc, epoch)
         writer.add_scalar('model/valid_thres', threshold, epoch)
+
+        # Check if there was an improvement
+        is_best = lfw_acc > best_acc
+        best_acc = max(lfw_acc, best_acc)
+        if not is_best:
+            epochs_since_improvement += 1
+            print("\nEpochs since last improvement: %d\n" % (epochs_since_improvement,))
+        else:
+            epochs_since_improvement = 0
+
+        # Adverserial epoch
+        train_loss, train_acc = train_adv(train_loader=adv_loader,
+                                      model=model,
+                                      threshold=threshold,
+                                      criterion=adv_criterion,
+                                      optimizer=optimizer,
+                                      epoch=epoch,
+                                      logger=logger)
+
+        writer.add_scalar('model/adv_train_loss', train_loss, epoch)
+        writer.add_scalar('model/adv_train_acc', train_acc, epoch)
+
+        logger.info('Learning rate={}, step number={}\n'.format(optimizer.lr, optimizer.step_num))
+
+        # One epoch's validation
+        lfw_acc, threshold = lfw_test(model)
+        writer.add_scalar('model/adv_valid_acc', lfw_acc, epoch)
+        writer.add_scalar('model/adv_valid_thres', threshold, epoch)
 
         # Check if there was an improvement
         is_best = lfw_acc > best_acc
@@ -161,6 +197,77 @@ def train(train_loader, model, metric_fc, criterion, optimizer, epoch, logger):
             logger.info('Epoch: [{0}][{1}/{2}]\t'
                         'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
                         'Top5 Accuracy {top5_accs.val:.3f} ({top5_accs.avg:.3f})'.format(epoch, i, len(train_loader),
+                                                                                         loss=losses,
+                                                                                         top5_accs=top5_accs))
+        # NOAM: Trying to overfit the adverserial training
+        if i > 1000:
+            break
+
+    return losses.avg, top5_accs.avg
+
+
+def train_adv(train_loader, model, threshold, criterion, optimizer, epoch, logger):
+    model.train()  # train mode (dropout and batchnorm is used)
+    #metric_fc.train()
+
+    losses = AverageMeter()
+    top5_accs = AverageMeter()
+
+    # Batches
+    for i, (img1, img2, label) in enumerate(train_loader):
+        # Move to GPU, if available
+        bs = img1.shape[0]
+        img1 = img1.to(device)
+        img2 = img2.to(device)
+        label = label.to(device).type_as(img1)  # [N, 1]
+
+        #img1 = img1[:1,:,:,:]
+        imgs_concatted = torch.cat((img1, img2), 0)
+        features_concat = model(imgs_concatted)
+
+        f1 = features_concat[:bs]
+        f2 = features_concat[bs:]
+        assert f1.shape == f2.shape
+        # Forward prop.
+        #f1 = model(img1)  # embedding => [N, 512]
+        #f2 = model(img1)  # embedding => [N, 512]
+
+        # https://github.com/pytorch/pytorch/issues/18027 No batch dot product
+        dot_product = (f1 * f2).sum(-1)
+        normalized = (f1.norm(dim=1) * f2.norm(dim=1) + 1e-5)
+        cosdistance = dot_product / normalized
+        # Change from -1 (opposite) -> 1 (same) range to 0 (same) - 1 (different)
+        features_diff = (torch.ones_like(cosdistance) - cosdistance) / 2
+        features_diff = features_diff.unsqueeze(1)
+
+
+        #output = metric_fc(feature, label)  # class_id_out => [N, 93431]
+        #threshold_decision = features_diff.sum(dim=1) - threshold
+        threshold_decision = dot_product - threshold
+
+        # Calculate loss
+        loss = criterion(threshold_decision, label)
+
+        # Back prop.
+        optimizer.zero_grad()
+        loss.backward()
+
+        # Clip gradients
+        optimizer.clip_gradient(grad_clip)
+
+        # Update weights
+        optimizer.step()
+
+        # Keep track of metrics
+        losses.update(loss.item())
+        #top5_accuracy = accuracy(threshold_decision, label, 5)
+        #top5_accs.update(top5_accuracy)
+
+        # Print status
+        if i % print_freq == 0:
+            logger.info('Epoch: [{0}][{1}/{2}]\t'
+                        'Adv Loss {loss.val:.4f} ({loss.avg:.4f})\t'
+                        'Adv Top5 Accuracy {top5_accs.val:.3f} ({top5_accs.avg:.3f})'.format(epoch, i, len(train_loader),
                                                                                          loss=losses,
                                                                                          top5_accs=top5_accs))
 
