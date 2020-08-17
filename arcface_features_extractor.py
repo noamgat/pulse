@@ -1,10 +1,14 @@
 import torch
 import numpy as np
+from skimage import transform as trans
 
-from align_faces import get_reference_facial_points, REFERENCE_FACIAL_POINTS, FaceWarpException
+from align_faces import get_reference_facial_points, REFERENCE_FACIAL_POINTS, FaceWarpException, \
+    get_affine_transform_matrix
 from config import image_h, image_w
 from utils import get_central_face_attributes_img
-
+import kornia
+import cv2
+from PIL import Image
 
 class ArcfaceFeaturesExtractor(torch.nn.Module):
     def __init__(self, load_pretrained):
@@ -13,8 +17,8 @@ class ArcfaceFeaturesExtractor(torch.nn.Module):
             raise Exception("Not supported yet")
         checkpoint = 'InsightFace_v2/pretrained/BEST_checkpoint_r101.tar'
         checkpoint = torch.load(checkpoint)
-        self.model = checkpoint['model'].module
-        self.model.eval()
+        self.face_features_extractor = checkpoint['model'].module
+        self.face_features_extractor.eval()
         # model = model.to(device)
         #model.eval()
         # bboxes, landmarks = get_central_face_attributes(filename)
@@ -32,14 +36,20 @@ class ArcfaceFeaturesExtractor(torch.nn.Module):
             img = self.transformer(img)
             aligned_imgs.append(img)
         x = torch.stack(aligned_imgs)
-        features = self.model(x)
+        features = self.face_features_extractor(x)
         return features
+
+    def torch_img_to_numpy_img(self, img):
+        numpy_img = img.cpu().numpy().transpose(1, 2, 0) * 255
+        return numpy_img
 
     def get_central_face_attributes(self, img):
         # This does not generate gradients yet. We hope that the process works well enough without it.
-        numpy_img = img.cpu().numpy()
         # Translate to H,W,D
-        #()
+        numpy_img = self.torch_img_to_numpy_img(img)
+
+        Image.fromarray((numpy_img).astype(np.uint8)).save('debug/get_central.jpeg')
+
         bboxes, landmarks = get_central_face_attributes_img(numpy_img)
         return bboxes, landmarks
 
@@ -59,9 +69,9 @@ class ArcfaceFeaturesExtractor(torch.nn.Module):
             output_size, inner_padding_factor, outer_padding, default_square)
 
         # dst_img = warp_and_crop_face(raw, facial5points)
-        dst_img = self.warp_and_crop_face(raw, facial5points, reference_pts=reference_5pts, crop_size=crop_size)
+        dst_img = self.warp_and_crop_face(img, facial5points, reference_pts=reference_5pts, crop_size=crop_size)
         return dst_img
-        return img
+        #return img
 
     def transformer(self, img):
         return img
@@ -119,7 +129,16 @@ class ArcfaceFeaturesExtractor(torch.nn.Module):
             tform.estimate(src_pts, ref_pts)
             tfm = tform.params[0:2, :]
 
-        face_img = cv2.warpAffine(src_img, tfm, (crop_size[0], crop_size[1]))
+        face_img = kornia.warp_affine(src_img.unsqueeze(0), torch.FloatTensor(tfm).unsqueeze(0),
+                                      (crop_size[0], crop_size[1]))
+
+        # Uncomment these lines to check equivalence of cv2.warpAffine and kornia.warp_affine
+        # numpy_img = self.torch_img_to_numpy_img(src_img)
+        # face_img_cv = cv2.warpAffine(numpy_img, tfm, (crop_size[0], crop_size[1]))
+        # Image.fromarray(face_img_cv.astype(np.uint8)).save('debug/align_cv.jpeg')
+
+        # numpy_img = self.torch_img_to_numpy_img(face_img[0])
+        # Image.fromarray(numpy_img.astype(np.uint8)).save('debug/align_kornia.jpeg')
+
 
         return face_img  # BGR
-

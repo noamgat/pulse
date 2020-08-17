@@ -74,18 +74,8 @@ class FaceComparer(torch.nn.Module):
         return facenet_features_extractor
 
     def create_arcface_features_extractor(self, load_pretrained):
-        if not load_pretrained:
-            raise Exception("Not supported yet")
-        checkpoint = 'InsightFace_v2/pretrained/BEST_checkpoint_r101.tar'
-        checkpoint = torch.load(checkpoint)
-        model = checkpoint['model'].module
-        #model = model.to(device)
-        model.eval()
-        # bboxes, landmarks = get_central_face_attributes(filename)
-        # img = align_face(full_path, landmarks)  # BGR
-        #img = img[..., ::-1]  # RGB
-        # img = transformer(img)
-        return checkpoint
+        from arcface_features_extractor import ArcfaceFeaturesExtractor
+        return ArcfaceFeaturesExtractor(load_pretrained)
 
 
     def extract_features(self, image_or_features):

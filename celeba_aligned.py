@@ -98,7 +98,8 @@ if __name__ == '__main__':
 
     from train_face_comparer import load_face_comparer_module
     #face_comparer_module, _ = load_face_comparer_module('configs/linear_basic.yml', for_eval=True)
-    face_comparer_module, _ = load_face_comparer_module('configs/sphereface_basic.yml', for_eval=True)
+    face_comparer_module, _ = load_face_comparer_module('configs/arcface_basic.yml', for_eval=False)
+    #face_comparer_module, _ = load_face_comparer_module('configs/sphereface_basic.yml', for_eval=True)
     face_features_extractor = face_comparer_module.face_comparer.face_features_extractor
 
     def run_experiment(target_dataset, num_trials, compare_feature_vectors_directly=True):
