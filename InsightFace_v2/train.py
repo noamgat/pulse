@@ -68,8 +68,18 @@ def train_net(args):
         checkpoint = torch.load(checkpoint)
         start_epoch = checkpoint['epoch'] + 1
         epochs_since_improvement = checkpoint['epochs_since_improvement']
-        model = checkpoint['model'].module
-        metric_fc = checkpoint['metric_fc'].module
+        model = checkpoint['model']
+        try:
+            model = model.module
+        except:
+            pass
+        model = nn.DataParallel(model)
+        metric_fc = checkpoint['metric_fc']
+        try:
+            metric_fc = metric_fc.module
+        except:
+            pass
+        metric_fc = nn.DataParallel(metric_fc)
         optimizer = checkpoint['optimizer']
 
     logger = get_logger()
