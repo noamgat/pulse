@@ -371,18 +371,23 @@ def copy_file(samples, old, new):
 
 
 def get_threshold():
-    with open(angles_file, 'r') as file:
-        lines = file.readlines()
 
     data = []
+    current_adverserial_flag = is_adverserial
+    for adverserial_flag in [False, True]:
+        set_is_adverserial(adverserial_flag)
 
-    for line in lines:
-        tokens = line.split()
-        angle = float(tokens[0])
-        type = int(tokens[1])
-        data.append({'angle': angle, 'type': type})
+        with open(angles_file, 'r') as file:
+            lines = file.readlines()
 
-    min_error = 6000
+        for line in lines:
+            tokens = line.split()
+            angle = float(tokens[0])
+            type = int(tokens[1])
+            data.append({'angle': angle, 'type': type})
+
+    set_is_adverserial(current_adverserial_flag)
+    min_error = 12000
     min_threshold = 0
 
     for d in data:
