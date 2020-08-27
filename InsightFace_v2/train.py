@@ -6,6 +6,7 @@ import torch
 from torch import nn
 from torch.utils.tensorboard import SummaryWriter
 
+from celeba_eval import celeba_test
 from config import device, grad_clip, print_freq
 from data_gen import ArcFaceDataset, AdverserialFaceDataset
 from focal_loss import FocalLoss
@@ -34,6 +35,9 @@ def train_net(args):
     writer = SummaryWriter()
     epochs_since_improvement = 0
     is_adverserial = args.adverserial
+    #if is_adverserial:
+        # https://github.com/pytorch/pytorch/issues/40403
+    #    torch.multiprocessing.set_start_method('spawn')  # good solution !!!!
 
     # Initialize / load checkpoint
     if checkpoint is None:
@@ -98,15 +102,29 @@ def train_net(args):
     train_dataset = ArcFaceDataset('train')
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
 
+    test_func = celeba_test if is_adverserial else lfw_test
     if is_adverserial:
         adv_dataset = AdverserialFaceDataset('train')
-        adv_loader = torch.utils.data.DataLoader(adv_dataset, batch_size=args.batch_size//2, shuffle=True, num_workers=4)
+        # Adverserial loader requires CUDA on its own, therefore need 'spawn' multiprocess mode
+        adv_loader = torch.utils.data.DataLoader(adv_dataset, batch_size=args.batch_size//2, shuffle=True,
+                                                 num_workers=4, multiprocessing_context='spawn')
         adv_criterion = nn.BCEWithLogitsLoss().to(device)
     max_train_rounds = 1000 if is_adverserial else -1
 
     # Epochs
     for epoch in range(start_epoch, args.end_epoch):
         # One epoch's training
+
+        if is_adverserial and epoch > 0:
+            post_batch_generator = create_train_adv_generator(train_loader=adv_loader,
+                                                              model=model,
+                                                              threshold=threshold,
+                                                              criterion=adv_criterion,
+                                                              optimizer=optimizer,
+                                                              epoch=epoch,
+                                                              logger=logger)
+        else:
+            post_batch_generator = None
 
         # Standard epoch
         train_loss, train_acc = train(train_loader=train_loader,
@@ -116,7 +134,8 @@ def train_net(args):
                                       optimizer=optimizer,
                                       epoch=epoch,
                                       logger=logger,
-                                      max_rounds=max_train_rounds)
+                                      max_rounds=max_train_rounds,
+                                      post_batch_generator=post_batch_generator)
 
         writer.add_scalar('model/train_loss', train_loss, epoch)
         writer.add_scalar('model/train_acc', train_acc, epoch)
@@ -124,7 +143,9 @@ def train_net(args):
         logger.info('Learning rate={}, step number={}\n'.format(optimizer.lr, optimizer.step_num))
 
         # One epoch's validation
-        lfw_acc, threshold = lfw_test(model)
+
+        lfw_acc, threshold = test_func(model)
+
         # lfw_acc, threshold = 0, 75
 
         writer.add_scalar('model/valid_acc', lfw_acc, epoch)
@@ -139,40 +160,34 @@ def train_net(args):
         else:
             epochs_since_improvement = 0
 
-        if is_adverserial:
-            # Adverserial epoch
-            train_loss, train_acc = train_adv(train_loader=adv_loader,
-                                          model=model,
-                                          threshold=threshold,
-                                          criterion=adv_criterion,
-                                          optimizer=optimizer,
-                                          epoch=epoch,
-                                          logger=logger)
-
-            writer.add_scalar('model/adv_train_loss', train_loss, epoch)
-            writer.add_scalar('model/adv_train_acc', train_acc, epoch)
-
-            logger.info('Learning rate={}, step number={}\n'.format(optimizer.lr, optimizer.step_num))
-
-            # One epoch's validation
-            lfw_acc, threshold = lfw_test(model)
-            writer.add_scalar('model/adv_valid_acc', lfw_acc, epoch)
-            writer.add_scalar('model/adv_valid_thres', threshold, epoch)
-
-            # Check if there was an improvement
-            is_best = lfw_acc > best_acc
-            best_acc = max(lfw_acc, best_acc)
-            if not is_best:
-                epochs_since_improvement += 1
-                print("\nEpochs since last improvement: %d\n" % (epochs_since_improvement,))
-            else:
-                epochs_since_improvement = 0
+        # if is_adverserial:
+        #     # Adverserial epoch
+        #     train_loss, train_acc =
+        #
+        #     writer.add_scalar('model/adv_train_loss', train_loss, epoch)
+        #     writer.add_scalar('model/adv_train_acc', train_acc, epoch)
+        #
+        #     logger.info('Learning rate={}, step number={}\n'.format(optimizer.lr, optimizer.step_num))
+        #
+        #     # One epoch's validation
+        #
+        #     writer.add_scalar('model/adv_valid_acc', lfw_acc, epoch)
+        #     writer.add_scalar('model/adv_valid_thres', threshold, epoch)
+        #
+        #     # Check if there was an improvement
+        #     is_best = lfw_acc > best_acc
+        #     best_acc = max(lfw_acc, best_acc)
+        #     if not is_best:
+        #         epochs_since_improvement += 1
+        #         print("\nEpochs since last improvement: %d\n" % (epochs_since_improvement,))
+        #     else:
+        #         epochs_since_improvement = 0
 
         # Save checkpoint
         save_checkpoint(epoch, epochs_since_improvement, model, metric_fc, optimizer, best_acc, is_best)
 
 
-def train(train_loader, model, metric_fc, criterion, optimizer, epoch, logger, max_rounds=-1):
+def train(train_loader, model, metric_fc, criterion, optimizer, epoch, logger, max_rounds=-1, post_batch_generator=None):
     model.train()  # train mode (dropout and batchnorm is used)
     metric_fc.train()
 
@@ -218,13 +233,20 @@ def train(train_loader, model, metric_fc, criterion, optimizer, epoch, logger, m
         if 0 < max_rounds <= i:
             break
 
+        if post_batch_generator is not None:
+            try:
+                next(post_batch_generator)
+            except StopIteration:
+                # Match the number of iterations between the two trainer types
+                break
+
     return losses.avg, top5_accs.avg
 
 
-def train_adv(train_loader, model, threshold, criterion, optimizer, epoch, logger):
-    model.train()  # train mode (dropout and batchnorm is used)
+def create_train_adv_generator(train_loader, model, threshold, criterion, optimizer, epoch, logger):
+    #model.train()  # train mode (dropout and batchnorm is used)
     #metric_fc.train()
-
+    yield
     losses = AverageMeter()
     top5_accs = AverageMeter()
 
@@ -285,6 +307,7 @@ def train_adv(train_loader, model, threshold, criterion, optimizer, epoch, logge
                         'Adv Top5 Accuracy {top5_accs.val:.3f} ({top5_accs.avg:.3f})'.format(epoch, i, len(train_loader),
                                                                                          loss=losses,
                                                                                          top5_accs=top5_accs))
+        yield
 
     return losses.avg, top5_accs.avg
 

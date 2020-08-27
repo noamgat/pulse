@@ -403,7 +403,7 @@ def get_threshold():
     return min_threshold
 
 
-def lfw_test(model):
+def celeba_test(model):
     #filename = 'data/lfw-funneled.tgz'
     #if not os.path.isdir('data/lfw_funneled'):
     #    print('Extracting {}...'.format(filename))
@@ -419,12 +419,12 @@ def lfw_test(model):
 
     #raise Exception("Early exit")
 
-    if not os.path.isfile(angles_file):
+    if True or not os.path.isfile(angles_file):
         print('Evaluating {}...'.format(angles_file))
         evaluate(model)
 
     set_is_adverserial(True)
-    if not os.path.isfile(angles_file):
+    if True or not os.path.isfile(angles_file):
         print('Evaluating {}...'.format(angles_file))
         evaluate(model)
 
@@ -436,25 +436,30 @@ def lfw_test(model):
     # threshold = 70.36
     thres = get_threshold()
     print('Calculating accuracy...')
-    acc = accuracy(thres)
-    print('Accuracy: {}%, threshold: {}'.format(acc * 100, thres))
+    acc1 = accuracy(thres)
+    print('Accuracy: {}%, threshold: {}'.format(acc1 * 100, thres))
 
     set_is_adverserial(True)
     print('Calculating Adverserial accuracy...')
-    acc = accuracy(thres)
-    print('Adverserial Accuracy: {}%, threshold: {}'.format(acc * 100, thres))
+    acc2 = accuracy(thres)
+    print('Adverserial Accuracy: {}%, threshold: {}'.format(acc2 * 100, thres))
 
+    acc = (acc1 + acc2) / 2
     return acc, thres
 
 
 if __name__ == "__main__":
-    checkpoint = 'pretrained/BEST_checkpoint_r101.tar'
+    import sys
+    if len(sys.argv) == 1:
+        checkpoint = 'pretrained/BEST_checkpoint_r101.tar'
+    else:
+        checkpoint = sys.argv[1]
     checkpoint = torch.load(checkpoint)
     model = checkpoint['model'].module
     model = model.to(device)
     model.eval()
 
-    acc, threshold = lfw_test(model)
+    acc, threshold = celeba_test(model)
 
     print('Visualizing {}...'.format(angles_file))
     visualize(threshold)
