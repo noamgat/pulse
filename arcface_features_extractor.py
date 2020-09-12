@@ -1,8 +1,10 @@
 import torch
 import numpy as np
 from skimage import transform as trans
+from torchvision import transforms
+from torchvision.utils import save_image
 
-from align_faces import get_reference_facial_points, REFERENCE_FACIAL_POINTS, FaceWarpException, \
+from InsightFace_v2.align_faces import get_reference_facial_points, REFERENCE_FACIAL_POINTS, FaceWarpException, \
     get_affine_transform_matrix
 from config import image_h, image_w
 from utils import get_central_face_attributes_img
@@ -10,15 +12,23 @@ import kornia
 import cv2
 from PIL import Image
 
+#face_features_extractor = None
+
 class ArcfaceFeaturesExtractor(torch.nn.Module):
-    def __init__(self, load_pretrained):
+    def __init__(self, load_pretrained, model_path=None):
         super().__init__()
         if not load_pretrained:
             raise Exception("Not supported yet")
-        checkpoint = 'InsightFace_v2/pretrained/BEST_checkpoint_r101.tar'
+        checkpoint = model_path or 'InsightFace_v2/pretrained/BEST_checkpoint_r101.tar'
         checkpoint = torch.load(checkpoint)
+
         self.face_features_extractor = checkpoint['model'].module
         self.face_features_extractor.eval()
+
+        # global face_features_extractor
+        #face_features_extractor = checkpoint['model'].module
+        #face_features_extractor.eval()
+
         # model = model.to(device)
         #model.eval()
         # bboxes, landmarks = get_central_face_attributes(filename)
@@ -28,19 +38,34 @@ class ArcfaceFeaturesExtractor(torch.nn.Module):
         #return checkpoint
 
     def forward(self, x: torch.Tensor):
+        import os
+        #os.makedirs('resources/celeba_input', exist_ok=True)
+        #save_image(x, 'resources/celeba_input/input.jpg')
+
         imgs = list(x)
         aligned_imgs = []
         for img in imgs:
             bboxes, landmarks = self.get_central_face_attributes(img)
             img = self.align_face(img, landmarks)
+            img = img.squeeze(0)
             img = self.transformer(img)
             aligned_imgs.append(img)
-        x = torch.stack(aligned_imgs)
+        x = torch.stack(aligned_imgs, 0)
+
+
+        #save_image(x, 'resources/celeba_input/processed.jpg')
+        #save_image(x, 'resources/validationprocessed.jpg')
+        #raise Exception("Saved")
+
+        #global face_features_extractor
+        #if next(face_features_extractor.parameters()).device != x.device:
+        #    face_features_extractor = face_features_extractor.to(x.device)
+        # features = face_features_extractor(x)
         features = self.face_features_extractor(x)
         return features
 
     def torch_img_to_numpy_img(self, img):
-        numpy_img = img.cpu().numpy().transpose(1, 2, 0) * 255
+        numpy_img = img.detach().cpu().numpy().transpose(1, 2, 0) * 255
         return numpy_img
 
     def get_central_face_attributes(self, img):
@@ -55,9 +80,15 @@ class ArcfaceFeaturesExtractor(torch.nn.Module):
 
     def align_face(self, img, facial5points):
         #raw = cv.imread(img_fn, True)  # BGR
-        facial5points = np.reshape(facial5points, (2, 5))
+
 
         crop_size = (image_h, image_w)
+
+        if facial5points is None:
+            # Couldn't extract landmarks, just resize. (TODO: Crop a bit?)
+            return kornia.resize(img.unsqueeze(0), crop_size).squeeze(0)
+
+        facial5points = np.reshape(facial5points, (2, 5))
 
         default_square = True
         inner_padding_factor = 0.25
@@ -68,12 +99,16 @@ class ArcfaceFeaturesExtractor(torch.nn.Module):
         reference_5pts = get_reference_facial_points(
             output_size, inner_padding_factor, outer_padding, default_square)
 
+
+
         # dst_img = warp_and_crop_face(raw, facial5points)
         dst_img = self.warp_and_crop_face(img, facial5points, reference_pts=reference_5pts, crop_size=crop_size)
         return dst_img
         #return img
 
     def transformer(self, img):
+        normalize = transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        img = normalize(img)
         return img
 
     def warp_and_crop_face(self, src_img,  # BGR
@@ -129,7 +164,8 @@ class ArcfaceFeaturesExtractor(torch.nn.Module):
             tform.estimate(src_pts, ref_pts)
             tfm = tform.params[0:2, :]
 
-        face_img = kornia.warp_affine(src_img.unsqueeze(0), torch.FloatTensor(tfm).unsqueeze(0),
+        face_img = kornia.warp_affine(src_img.unsqueeze(0),
+                                      torch.FloatTensor(tfm).unsqueeze(0).to(src_img.device),
                                       (crop_size[0], crop_size[1]))
 
         # Uncomment these lines to check equivalence of cv2.warpAffine and kornia.warp_affine

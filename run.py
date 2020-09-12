@@ -48,6 +48,8 @@ parser.add_argument('-duplicates', type=int, default=1, help='How many HR images
 parser.add_argument('-batch_size', type=int, default=1, help='Batch size to use during optimization')
 parser.add_argument('-overwrite', action='store_true', help='Recreate files even if the output file exists')
 parser.add_argument('-input_prefix', type=str, default='', help='Only operate on filenames begnning with X')
+parser.add_argument('-output_image_type', type=str, default='jpg', help='What image type to create? png/jpg')
+parser.add_argument('-copy_target', action='store_true', help='Copy the target image besides the output')
 
 #PULSE arguments
 parser.add_argument('-seed', type=int, help='manual seed to use')
@@ -63,6 +65,7 @@ parser.add_argument('-steps', type=int, default=100, help='Number of optimizatio
 parser.add_argument('-lr_schedule', type=str, default='linear1cycledrop', help='fixed, linear1cycledrop, linear1cycle')
 parser.add_argument('-save_intermediate', action='store_true', help='Whether to store and save intermediate HR and LR images during optimization')
 parser.add_argument('-gpu_id', default=2, type=int, help='Which gpu to use')
+parser.add_argument('-face_comparer_config', default='configs/linear_basic.yml', type=str, help='YML file of face comparer')
 
 kwargs = vars(parser.parse_args())
 
@@ -78,10 +81,11 @@ print(f"Running on {len(dataset)} files")
 out_path = Path(kwargs["output_dir"])
 output_suffix = kwargs["output_suffix"]
 out_path.mkdir(parents=True, exist_ok=True)
-
+ouptut_image_type = kwargs["output_image_type"]
+copy_target = kwargs["copy_target"]
 dataloader = DataLoader(dataset, batch_size=kwargs["batch_size"])
 
-model = PULSE(cache_dir=kwargs["cache_dir"])
+model = PULSE(cache_dir=kwargs["cache_dir"], face_comparer_config=kwargs['face_comparer_config'])
 model = model.cuda()
 # model = DataParallel(model)
 
@@ -119,13 +123,17 @@ for ref_im, ref_im_name, target_identity_im in dataloader:
         for j,(HR,LR) in enumerate(model(ref_im,target_identity_im,**kwargs)):
             for i in range(kwargs["batch_size"]):
                 toPIL(HR[i].cpu().detach().clamp(0, 1)).save(
-                    int_path_HR / f"{ref_im_name[i]}_{j:0{padding}}_{output_suffix}.png")
+                    int_path_HR / f"{ref_im_name[i]}_{j:0{padding}}_{output_suffix}.{ouptut_image_type}")
                 toPIL(LR[i].cpu().detach().clamp(0, 1)).save(
-                    int_path_LR / f"{ref_im_name[i]}_{j:0{padding}}_{output_suffix}.png")
+                    int_path_LR / f"{ref_im_name[i]}_{j:0{padding}}_{output_suffix}.{ouptut_image_type}")
     else:
         #out_im = model(ref_im,**kwargs)
-        for j,(HR,LR) in enumerate(model(ref_im,target_identity_im,**kwargs)):
+        for j,(HR,LR) in enumerate(model(ref_im, target_identity_im, **kwargs)):
             for i in range(kwargs["batch_size"]):
-                output_filename = out_path / f"{ref_im_name[i]}_{output_suffix}.png"
+                output_filename = out_path / f"{ref_im_name[i]}_{output_suffix}.{ouptut_image_type}"
                 toPIL(HR[i].cpu().detach().clamp(0, 1)).save(output_filename)
                 print(f"Created {output_filename}")
+            if copy_target:
+                output_filename = out_path / f"{ref_im_name[0]}_{output_suffix}_target.{ouptut_image_type}"
+                toPIL(target_identity_im.cpu().detach().clamp(0, 1)).save(output_filename)
+                print(f"Copied target {output_filename}")

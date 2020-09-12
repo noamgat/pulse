@@ -1,3 +1,5 @@
+import math
+
 from bicubic import BicubicDownsampleTargetSize
 from sphereface_pytorch.net_sphere import sphere20a
 from stylegan import G_synthesis,G_mapping
@@ -33,20 +35,28 @@ class FaceComparer(torch.nn.Module):
     FEATURE_NORMALIZATION_ABS = 0
     FEATURE_NORMALIZATION_SIGN = 1
     FEATURE_NORMALIZATION_SQUARE = 2
-    FEATURE_NORMALIZATION_COS = 3
+    FEATURE_NORMALIZATION_ANGLE = 3
+    FEATURE_NORMALIZATION_DOT = 4
 
-    def __init__(self, feature_extractor_model='facenet', load_pretrained=True, hidden_dims=[], initial_bias=None, feature_normalization_mode=FEATURE_NORMALIZATION_ABS):
+    def __init__(self,
+                 feature_extractor_model='facenet',
+                 load_pretrained=True,
+                 hidden_dims=[],
+                 initial_bias=None,
+                 feature_normalization_mode=FEATURE_NORMALIZATION_ABS,
+                 feature_extractor_params={}):
         super(FaceComparer, self).__init__()
         if feature_extractor_model == 'facenet':
-            self.face_features_extractor = self.create_facenet_features_extractor(load_pretrained)
+            self.face_features_extractor = self.create_facenet_features_extractor(load_pretrained, **feature_extractor_params)
         elif feature_extractor_model == 'sphereface':
-            self.face_features_extractor = self.create_sphereface_features_extractor(load_pretrained)
+            self.face_features_extractor = self.create_sphereface_features_extractor(load_pretrained, **feature_extractor_params)
             #self.image_extractor = torch.nn.Sequential(downsample_to_128, cropy)
         elif feature_extractor_model == 'arcface':
-            self.face_features_extractor = self.create_arcface_features_extractor(load_pretrained)
+            self.face_features_extractor = self.create_arcface_features_extractor(load_pretrained, **feature_extractor_params)
         else:
             raise Exception(f"Invalid feature extractor model '{feature_extractor_model}'")
-        first_tail_dimension = 1 if feature_normalization_mode == self.FEATURE_NORMALIZATION_COS else 512
+        first_tail_dimension = 1 if feature_normalization_mode in \
+                                    [self.FEATURE_NORMALIZATION_ANGLE, self.FEATURE_NORMALIZATION_DOT] else 512
         self.tail = build_mlp(first_tail_dimension, hidden_dims, 1)
         self.feature_normalization_mode = feature_normalization_mode
         last_fc = self.tail[0]
@@ -73,9 +83,9 @@ class FaceComparer(torch.nn.Module):
         facenet_features_extractor = torch.nn.Sequential(downsample_to_160, feature_extractor)
         return facenet_features_extractor
 
-    def create_arcface_features_extractor(self, load_pretrained):
+    def create_arcface_features_extractor(self, load_pretrained, model_path=None):
         from arcface_features_extractor import ArcfaceFeaturesExtractor
-        return ArcfaceFeaturesExtractor(load_pretrained)
+        return ArcfaceFeaturesExtractor(load_pretrained, model_path)
 
 
     def extract_features(self, image_or_features):
@@ -102,16 +112,22 @@ class FaceComparer(torch.nn.Module):
             is_nonnegative = features_diff[:, 0] >= 0
             sign_vector = ((is_nonnegative * 1) - 0.5) * 2
             features_diff *= sign_vector.unsqueeze(0).T
-        elif self.feature_normalization_mode == self.FEATURE_NORMALIZATION_COS:
+        elif self.feature_normalization_mode == self.FEATURE_NORMALIZATION_ANGLE:
             f1 = features_1
             f2 = features_2
             # https://github.com/pytorch/pytorch/issues/18027 No batch dot product
             dot_product = (f1 * f2).sum(-1)
+            if f1.norm(dim=1).mean().item() > 1000000:
+                print("WARNING: Angle loss: Norms: %.2f, %.2f" % (f1.norm(dim=1).mean(), f2.norm(dim=1).mean()))
+                features_1 = self.extract_features(x_1)
             normalized = (f1.norm(dim=1) * f2.norm(dim=1) + 1e-5)
             cosdistance = dot_product / normalized
-            # Change from -1 (opposite) -> 1 (same) range to 0 (same) - 1 (different)
-            features_diff = (torch.ones_like(cosdistance) - cosdistance) / 2
-            features_diff = features_diff.unsqueeze(1)
+            angledistance = torch.acos(cosdistance) * (180 / math.pi)
+            ## Change from -1 (opposite) -> 1 (same) range to 0 (same) - 1 (different)
+            #features_diff = (torch.ones_like(cosdistance) - cosdistance) / 2
+            features_diff = angledistance.unsqueeze(1)
+        else:
+            raise Exception("unknown normalization mode " + self.feature_normalization_mode)
 
         mlp_output = self.tail(features_diff)
         #mlp_output = mlp_output.squeeze(1)

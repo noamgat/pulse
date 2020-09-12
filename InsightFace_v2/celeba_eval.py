@@ -11,30 +11,34 @@ import torch
 from PIL import Image
 from matplotlib import pyplot as plt
 from torchvision.datasets import CelebA
+from torchvision.utils import save_image
 from tqdm import tqdm
 
 from celeba_aligned_copy import build_aligned_celeba, CelebAPairsDataset, CelebAAdverserialDataset
 from config import device
-from data_gen import data_transforms
+from data_gen import data_transforms, AdverserialFaceDataset
 from utils import align_face, get_central_face_attributes, get_all_face_attributes, draw_bboxes
 
-normal_angles_file = 'data/celeba_angles.txt'
-normal_lfw_pickle = 'data/celeba_funneled.pkl'
-normal_test_pair_file = 'data/celeba_test_pair.txt'
+celeba_split = 'valid'  # train / valid / test / all
+
+normal_angles_file = f'data/celeba_angles_{celeba_split}.txt'
+normal_lfw_pickle = f'data/celeba_funneled_{celeba_split}.pkl'
+normal_test_pair_file = f'data/celeba_test_pair_{celeba_split}.txt'
+checkpoint_name = 'checkpoint'
 
 N = 6000
 celeba_raw = build_aligned_celeba('../CelebA_Raw', '../CelebA_large')
-celeba_orig = CelebA(root='../CelebA_Raw', split='all', download=False, target_type='identity')
+celeba_orig = CelebA(root='../CelebA_Raw', split=celeba_split, download=False, target_type='identity')
 celeba = celeba_orig
 
 generated_suffix = 'withidentity'  # can also be 'generated'
-generated = build_aligned_celeba('../CelebA_Raw', f'../CelebA_{generated_suffix}', new_image_suffix='_0')
-large_matching_generated = build_aligned_celeba('../CelebA_Raw', '../CelebA_large', custom_indices=generated.filtered_indices)
+generated = build_aligned_celeba('../CelebA_Raw', f'../CelebA_{generated_suffix}', new_image_suffix='_0', split=celeba_split)
+large_matching_generated = build_aligned_celeba('../CelebA_Raw', '../CelebA_large', custom_indices=generated.filtered_indices, split=celeba_split)
 adverserial_dataset_1 = CelebAAdverserialDataset(generated, large_matching_generated, return_indices=True)
 
-adverserial_pickle = 'data/celeba_adverserial_funneled.pkl'
-adverserial_test_pair_file = 'data/celeba_adverserial_test_pair.txt'
-adverserial_angles_file = 'data/celeba_adverserial_angles.txt'
+adverserial_pickle = f'data/celeba_adverserial_funneled_{celeba_split}.pkl'
+adverserial_test_pair_file = f'data/celeba_adverserial_test_pair_{celeba_split}.txt'
+adverserial_angles_file = f'data/celeba_adverserial_angles_{celeba_split}.txt'
 
 angles_file = normal_angles_file
 lfw_pickle = normal_lfw_pickle
@@ -168,10 +172,15 @@ def evaluate(model):
             tokens = line.split()
             file0 = tokens[0]
             img0 = get_image(samples, transformer, file0)
+
             file1 = tokens[1]
             img1 = get_image(samples, transformer, file1)
             if img0 is None or img1 is None:
                 continue
+            #os.makedirs('images/celebanetinput', exist_ok=True)
+            #save_image(img0, 'images/celebanetinput/img0.jpg')
+            #save_image(img1, 'images/celebanetinput/img1.jpg')
+            #raise Exception("MANUAL STOP")
             imgs = torch.zeros([2, 3, 112, 112], dtype=torch.float, device=device)
             imgs[0] = img0
             imgs[1] = img1
@@ -214,8 +223,11 @@ def visualize(threshold):
 
     bins = np.linspace(0, 180, 181)
 
-    plt.hist(zeros, bins, density=True, alpha=0.5, label='0', facecolor='red')
-    plt.hist(ones, bins, density=True, alpha=0.5, label='1', facecolor='blue')
+    if is_adverserial:
+        plt.hist(zeros, bins, density=True, alpha=0.5, label='2', facecolor='yellow')
+    else:
+        plt.hist(zeros, bins, density=True, alpha=0.5, label='0', facecolor='red')
+        plt.hist(ones, bins, density=True, alpha=0.5, label='1', facecolor='blue')
 
     mu_0 = np.mean(zeros)
     sigma_0 = np.std(zeros)
@@ -228,7 +240,8 @@ def visualize(threshold):
     plt.xlabel('theta')
     plt.ylabel('theta j Distribution')
     plt.title(
-        r'Histogram : mu_0={:.4f},sigma_0={:.4f}, mu_1={:.4f},sigma_1={:.4f}'.format(mu_0, sigma_0, mu_1, sigma_1))
+        '{}\nHistogram : mu_0={:.4f},sigma_0={:.4f}, mu_1={:.4f},sigma_1={:.4f}'.
+            format(checkpoint_name, mu_0, sigma_0, mu_1, sigma_1))
 
     print('threshold: ' + str(threshold))
     print('mu_0: ' + str(mu_0))
@@ -238,8 +251,10 @@ def visualize(threshold):
 
     plt.legend(loc='upper right')
     plt.plot([threshold, threshold], [0, 0.05], 'k-', lw=2)
-    plt.savefig('images/theta_dist.png')
-    plt.show()
+    plt.savefig(f'images/theta_dist/celeba_theta_dist_{checkpoint_name}_adv{is_adverserial}.png')
+    if is_adverserial:
+        plt.close()
+    # plt.show()
 
 
 def accuracy(threshold):
@@ -370,11 +385,12 @@ def copy_file(samples, old, new):
     cv.imwrite(new_fn, img)
 
 
-def get_threshold():
+def get_threshold(normal_mistake_weight=1.0, adverserial_mistake_weight=1.0):
 
     data = []
     current_adverserial_flag = is_adverserial
     for adverserial_flag in [False, True]:
+        mistake_weight = adverserial_mistake_weight if adverserial_flag else normal_mistake_weight
         set_is_adverserial(adverserial_flag)
 
         with open(angles_file, 'r') as file:
@@ -384,7 +400,7 @@ def get_threshold():
             tokens = line.split()
             angle = float(tokens[0])
             type = int(tokens[1])
-            data.append({'angle': angle, 'type': type})
+            data.append({'angle': angle, 'type': type, 'weight': mistake_weight})
 
     set_is_adverserial(current_adverserial_flag)
     min_error = 12000
@@ -392,8 +408,8 @@ def get_threshold():
 
     for d in data:
         threshold = d['angle']
-        type1 = len([s for s in data if s['angle'] <= threshold and s['type'] == 0])
-        type2 = len([s for s in data if s['angle'] > threshold and s['type'] == 1])
+        type1 = sum([s['weight'] for s in data if s['angle'] <= threshold and s['type'] == 0])
+        type2 = sum([s['weight'] for s in data if s['angle'] > threshold and s['type'] == 1])
         num_errors = type1 + type2
         if num_errors < min_error:
             min_error = num_errors
@@ -403,7 +419,7 @@ def get_threshold():
     return min_threshold
 
 
-def celeba_test(model):
+def celeba_test(model, normal_weight=1.0, adverserial_weight=1.0):
     #filename = 'data/lfw-funneled.tgz'
     #if not os.path.isdir('data/lfw_funneled'):
     #    print('Extracting {}...'.format(filename))
@@ -419,12 +435,13 @@ def celeba_test(model):
 
     #raise Exception("Early exit")
 
-    if True or not os.path.isfile(angles_file):
+    recalc_every_time = True
+    if recalc_every_time or not os.path.isfile(angles_file):
         print('Evaluating {}...'.format(angles_file))
         evaluate(model)
 
     set_is_adverserial(True)
-    if True or not os.path.isfile(angles_file):
+    if recalc_every_time or not os.path.isfile(angles_file):
         print('Evaluating {}...'.format(angles_file))
         evaluate(model)
 
@@ -434,7 +451,7 @@ def celeba_test(model):
 
     print('Calculating threshold...')
     # threshold = 70.36
-    thres = get_threshold()
+    thres = get_threshold(normal_weight, adverserial_weight)
     print('Calculating accuracy...')
     acc1 = accuracy(thres)
     print('Accuracy: {}%, threshold: {}'.format(acc1 * 100, thres))
@@ -444,16 +461,20 @@ def celeba_test(model):
     acc2 = accuracy(thres)
     print('Adverserial Accuracy: {}%, threshold: {}'.format(acc2 * 100, thres))
 
-    acc = (acc1 + acc2) / 2
+    acc = (acc1 * normal_weight + acc2 * adverserial_weight) / (normal_weight + adverserial_weight)
     return acc, thres
 
 
 if __name__ == "__main__":
     import sys
+    print(f"len(sys.argv)={len(sys.argv)}")
     if len(sys.argv) == 1:
         checkpoint = 'pretrained/BEST_checkpoint_r101.tar'
     else:
         checkpoint = sys.argv[1]
+
+    print(f"Loading checkpoint {checkpoint}")
+    checkpoint_name = checkpoint[:-4].replace('/', '_')
     checkpoint = torch.load(checkpoint)
     model = checkpoint['model'].module
     model = model.to(device)
@@ -462,10 +483,13 @@ if __name__ == "__main__":
     acc, threshold = celeba_test(model)
 
     print('Visualizing {}...'.format(angles_file))
+    set_is_adverserial(False)
+    visualize(threshold)
+    set_is_adverserial(True)
     visualize(threshold)
 
     print('error analysis...')
-    error_analysis(threshold)
+    # error_analysis(threshold)
 
 
 

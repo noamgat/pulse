@@ -13,6 +13,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 from torch import optim
 from torch.optim.lr_scheduler import MultiStepLR
 from torch.utils.data import DataLoader, ConcatDataset
+from torchvision.utils import save_image
 
 from bicubic import BicubicDownsampleTargetSize
 from celeba_aligned import build_aligned_celeba, CelebAPairsDataset, CelebAAdverserialDataset
@@ -21,6 +22,8 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 import pl_transfer_learning_helpers
+
+NUM_WORKERS = 0
 
 class FaceComparerModule(LightningModule):
     def __init__(self, *args, face_comparer_params=None, **kwargs):
@@ -34,7 +37,8 @@ class FaceComparerModule(LightningModule):
         self.train_bn = kwargs.pop('train_bn', 0)
         super().__init__(*args, **kwargs)
         self.face_comparer = FaceComparer(**face_comparer_params)
-        pl_transfer_learning_helpers.freeze(self.feature_extractor, train_bn=self.train_bn)
+        # TODO ENABLE FOR LEARNING
+        # pl_transfer_learning_helpers.freeze(self.feature_extractor, train_bn=self.train_bn)
         #self.face_comparer.cuda()
         #self.device = self.face_comparer.tail[0].weight.device # TODO : Easiest way?
         self.lr_scheduler_gamma = 1e-1
@@ -52,7 +56,7 @@ class FaceComparerModule(LightningModule):
         large = build_aligned_celeba('CelebA_Raw', 'CelebA_large', split=split)
         pairs_dataset = CelebAPairsDataset(large, same_ratio=same_ratio, num_samples=10000)
         if not self.include_adverserial_faces:
-            return DataLoader(pairs_dataset, batch_size=batch_size, num_workers=2, shuffle=shuffle)
+            return DataLoader(pairs_dataset, batch_size=batch_size, num_workers=NUM_WORKERS, shuffle=shuffle)
 
         transform_func = functools.partial(BicubicDownsampleTargetSize.downsample_single, size=256, mode='area')
         transform = torchvision.transforms.Lambda(transform_func)
@@ -63,7 +67,7 @@ class FaceComparerModule(LightningModule):
         adverserial_dataset = CelebAAdverserialDataset(withidentity, large_matching_withidentity)
         pairs_dataset = CelebAPairsDataset(large, same_ratio=same_ratio, num_samples=len(adverserial_dataset))
         concat_dataset = ConcatDataset([pairs_dataset, adverserial_dataset])
-        return DataLoader(concat_dataset, batch_size=batch_size, num_workers=2, shuffle=shuffle)
+        return DataLoader(concat_dataset, batch_size=batch_size, num_workers=NUM_WORKERS, shuffle=shuffle)
 
     @pl.data_loader
     def train_dataloader(self):
@@ -92,6 +96,8 @@ class FaceComparerModule(LightningModule):
     def test_or_validation_step(self, batch, batch_idx, prefix='val'):
         x1, x2, y = batch
         y = y.unsqueeze(1)
+
+        save_image(torch.cat((x1, x2)), 'resources/validationinputs.jpg')
 
         # implement your own
         prediction = self(x1, x2)
@@ -178,9 +184,13 @@ def load_face_comparer_module(config_file_path, opts=None, for_eval=False):
     force_restart = opts and opts.force_restart
     last_ckpt = last_ckpt if os.path.exists(last_ckpt) and not force_restart else None
     if for_eval:
-        if not last_ckpt:
-            raise Exception("for_eval=True requires checkpoint to exist")
-        net = FaceComparerModule.load_from_checkpoint(last_ckpt, **model_params)
+        if last_ckpt:
+            net = FaceComparerModule.load_from_checkpoint(last_ckpt, **model_params)
+        else:
+            print("Warning: for_eval=True with no checkpoint.")
+            net = FaceComparerModule(**model_params)
+
+        net.cuda()
         net.eval()
         net.freeze()
         trainer = None
@@ -188,7 +198,7 @@ def load_face_comparer_module(config_file_path, opts=None, for_eval=False):
         net = FaceComparerModule(**model_params)
         trainer = Trainer(gpus=[torch.cuda.current_device()],
                           logger=False,
-                          fast_dev_run=False,
+                          #fast_dev_run=False,
                           checkpoint_callback=checkpoint_callback,
                           resume_from_checkpoint=last_ckpt,
                           **trainer_params)

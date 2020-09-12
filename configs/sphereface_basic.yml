@@ -2,9 +2,11 @@ trainer_params: {}
 model_params:
   face_comparer_params:
     hidden_dims: []
-    initial_bias: 0
-    feature_extractor_model: 'sphereface'
+    initial_bias: -75
+    feature_extractor_model: 'arcface'
     feature_normalization_mode: 3
+    feature_extractor_params:
+      model_path: 'InsightFace_v2/pretrained/BEST_checkpoint_101_20200831.tar'
   milestones: [100000, 200000]
 checkpoint_params:
   save_last: True

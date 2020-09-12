@@ -14,7 +14,7 @@ from drive import open_url
 
 
 class PULSE(torch.nn.Module):
-    def __init__(self, cache_dir, verbose=True):
+    def __init__(self, cache_dir, face_comparer_config, verbose=True):
         super(PULSE, self).__init__()
 
         self.synthesis = G_synthesis().cuda()
@@ -53,7 +53,7 @@ class PULSE(torch.nn.Module):
 
         from train_face_comparer import load_face_comparer_module
         # Create an inception resnet (in eval mode):
-        net, trainer = load_face_comparer_module('configs/linear_basic.yml', for_eval=True)
+        net, trainer = load_face_comparer_module(face_comparer_config, for_eval=True)
         self.face_features_extractor = net.face_comparer
 
     def forward(self, ref_im,

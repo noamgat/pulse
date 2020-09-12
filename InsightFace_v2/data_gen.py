@@ -87,8 +87,8 @@ class AdverserialFaceDataset(Dataset):
 
     def __getitem__(self, item):
         import celeba_eval
-        data_source = self.generated_dataset if item % 2 == 0 else self.pairs_dataset
-        samples = self.generated_samples if item % 2 == 0 else self.pairs_samples
+        data_source = self.generated_dataset if (item % 2) == 0 else self.pairs_dataset
+        samples = self.generated_samples if (item % 2) == 0 else self.pairs_samples
         data_index = item // 2
         (data_source_1, idx1), (data_source_2, idx2), is_different = data_source[data_index]
         fn1 = data_source_1.filename[idx1]

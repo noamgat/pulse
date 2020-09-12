@@ -35,9 +35,14 @@ class LossBuilder(torch.nn.Module):
         gen_identity_vector = self.face_features_extractor.extract_features(gen_im)
         return 10*((gen_identity_vector - target_identity_vector).abs().mean(1).sum())
 
-    def _loss_identity_score(self, gen_im, target_identity_vector, **kwargs):
+    def _loss_identity_score_sigmoid(self, gen_im, target_identity_vector, **kwargs):
         logit = self.face_features_extractor.forward(gen_im, target_identity_vector)
         return torch.sigmoid(logit).mean(1).sum()
+
+    def _loss_identity_score_l1(self, gen_im, target_identity_vector, **kwargs):
+        logit = self.face_features_extractor.forward(gen_im, target_identity_vector)
+        logit[logit < 0] = 0
+        return logit.mean(1).sum()
 
     # Uses geodesic distance on sphere to sum pairwise distances of the 18 vectors
     def _loss_geocross(self, latent, **kwargs):
@@ -67,7 +72,8 @@ class LossBuilder(torch.nn.Module):
             'GEOCROSS': self._loss_geocross,
             'L2_IDENTITY': self._loss_l2_identity,
             'L1_IDENTITY': self._loss_l1_identity,
-            'IDENTITY_SCORE': self._loss_identity_score,
+            'IDENTITY_SCORE': self._loss_identity_score_sigmoid,
+            'IDENTITY_SCORE_L1': self._loss_identity_score_l1,
         }
         losses = {}
         for weight, loss_type in self.parsed_loss:

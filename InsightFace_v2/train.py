@@ -1,10 +1,13 @@
+import math
 import os
+from functools import partial
 from shutil import copyfile
 
 import numpy as np
 import torch
 from torch import nn
 from torch.utils.tensorboard import SummaryWriter
+from torchvision.utils import save_image
 
 from celeba_eval import celeba_test
 from config import device, grad_clip, print_freq
@@ -35,6 +38,8 @@ def train_net(args):
     writer = SummaryWriter()
     epochs_since_improvement = 0
     is_adverserial = args.adverserial
+    adverserial_weight = args.adverserial_weight
+    adverserial_test_weight = args.adverserial_test_weight
     #if is_adverserial:
         # https://github.com/pytorch/pytorch/issues/40403
     #    torch.multiprocessing.set_start_method('spawn')  # good solution !!!!
@@ -99,17 +104,26 @@ def train_net(args):
         criterion = nn.CrossEntropyLoss().to(device)
 
     # Custom dataloaders
+    num_workers = 0 if args.debug else 4
     train_dataset = ArcFaceDataset('train')
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
+    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=num_workers)
 
-    test_func = celeba_test if is_adverserial else lfw_test
+    test_func = partial(celeba_test, normal_weight=1.0, adverserial_weight=adverserial_test_weight) if is_adverserial else lfw_test
     if is_adverserial:
         adv_dataset = AdverserialFaceDataset('train')
         # Adverserial loader requires CUDA on its own, therefore need 'spawn' multiprocess mode
         adv_loader = torch.utils.data.DataLoader(adv_dataset, batch_size=args.batch_size//2, shuffle=True,
-                                                 num_workers=4, multiprocessing_context='spawn')
+                                                 num_workers=num_workers,
+                                                 multiprocessing_context=None if num_workers == 0 else 'spawn')
         adv_criterion = nn.BCEWithLogitsLoss().to(device)
+        if start_epoch > 0:
+            logger.info('Model already exists, calculating first threshold for adverserial training\n')
+            start_acc, threshold = (0.5, 75) if args.debug else test_func(model)
+            logger.info(f'Starting accuracy={start_acc}, threshold={threshold}\n')
     max_train_rounds = 1000 if is_adverserial else -1
+    if args.debug:
+        max_train_rounds = 10
+        print_freq = 2
 
     # Epochs
     for epoch in range(start_epoch, args.end_epoch):
@@ -122,7 +136,8 @@ def train_net(args):
                                                               criterion=adv_criterion,
                                                               optimizer=optimizer,
                                                               epoch=epoch,
-                                                              logger=logger)
+                                                              logger=logger,
+                                                              loss_multiplier=adverserial_weight)
         else:
             post_batch_generator = None
 
@@ -243,7 +258,7 @@ def train(train_loader, model, metric_fc, criterion, optimizer, epoch, logger, m
     return losses.avg, top5_accs.avg
 
 
-def create_train_adv_generator(train_loader, model, threshold, criterion, optimizer, epoch, logger):
+def create_train_adv_generator(train_loader, model, threshold, criterion, optimizer, epoch, logger, loss_multiplier):
     #model.train()  # train mode (dropout and batchnorm is used)
     #metric_fc.train()
     yield
@@ -251,12 +266,18 @@ def create_train_adv_generator(train_loader, model, threshold, criterion, optimi
     top5_accs = AverageMeter()
 
     # Batches
-    for i, (img1, img2, label) in enumerate(train_loader):
+    for i, (img1, img2, is_different_label) in enumerate(train_loader):
         # Move to GPU, if available
         bs = img1.shape[0]
         img1 = img1.to(device)
         img2 = img2.to(device)
-        label = label.to(device).type_as(img1)  # [N, 1]
+
+        #os.makedirs('images/training_batches', exist_ok=True)
+        #save_image(torch.cat([torch.stack((i1, i2), dim=0) for i1, i2 in zip(img1, img2)]),
+        #           'images/training_batches/adv_batch.jpg')
+        #open('images/training_batches/label.txt', 'w').write(str(is_different_label.numpy().reshape(-1, 4)))
+
+        is_different_label = is_different_label.to(device).type_as(img1)  # [N, 1]
 
         #img1 = img1[:1,:,:,:]
         imgs_concatted = torch.cat((img1, img2), 0)
@@ -273,17 +294,18 @@ def create_train_adv_generator(train_loader, model, threshold, criterion, optimi
         dot_product = (f1 * f2).sum(-1)
         normalized = (f1.norm(dim=1) * f2.norm(dim=1) + 1e-5)
         cosdistance = dot_product / normalized
+        angle = torch.acos(cosdistance) * 180 / math.pi
         # Change from -1 (opposite) -> 1 (same) range to 0 (same) - 1 (different)
-        features_diff = (torch.ones_like(cosdistance) - cosdistance) / 2
-        features_diff = features_diff.unsqueeze(1)
+        #features_diff = (torch.ones_like(cosdistance) - cosdistance) / 2
+        #features_diff = features_diff.unsqueeze(1)
 
 
         #output = metric_fc(feature, label)  # class_id_out => [N, 93431]
         #threshold_decision = features_diff.sum(dim=1) - threshold
-        threshold_decision = dot_product - threshold
+        threshold_decision = angle - threshold
 
         # Calculate loss
-        loss = criterion(threshold_decision, label)
+        loss = criterion(threshold_decision, is_different_label) * loss_multiplier
 
         # Back prop.
         optimizer.zero_grad()
@@ -297,14 +319,15 @@ def create_train_adv_generator(train_loader, model, threshold, criterion, optimi
 
         # Keep track of metrics
         losses.update(loss.item())
+        binary_accuracy = ((threshold_decision > 0).type(torch.int) == is_different_label).sum().item() / bs
         #top5_accuracy = accuracy(threshold_decision, label, 5)
-        #top5_accs.update(top5_accuracy)
+        top5_accs.update(binary_accuracy)
 
         # Print status
         if i % print_freq == 0:
             logger.info('Epoch: [{0}][{1}/{2}]\t'
                         'Adv Loss {loss.val:.4f} ({loss.avg:.4f})\t'
-                        'Adv Top5 Accuracy {top5_accs.val:.3f} ({top5_accs.avg:.3f})'.format(epoch, i, len(train_loader),
+                        'Adv Accuracy {top5_accs.val:.3f} ({top5_accs.avg:.3f})'.format(epoch, i, len(train_loader),
                                                                                          loss=losses,
                                                                                          top5_accs=top5_accs))
         yield

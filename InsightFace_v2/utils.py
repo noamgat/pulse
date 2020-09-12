@@ -192,6 +192,9 @@ def parse_args():
     parser.add_argument('--full-log', type=bool, default=False, help='full logging')
     parser.add_argument('--checkpoint', type=str, default=None, help='checkpoint')
     parser.add_argument('--adverserial', help='Use adverserial training epochs', action='store_true')
+    parser.add_argument('--debug', help='Is debugging with breakpoints? (Short epochs, no async)', action='store_true')
+    parser.add_argument('--adverserial-weight', type=float, default=0.5, help='Weight of adverserial component')
+    parser.add_argument('--adverserial-test-weight', type=float, default=0.2, help='Weight of adverserial component in decision threshold search')
     args = parser.parse_args()
     return args
 

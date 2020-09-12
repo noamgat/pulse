@@ -98,7 +98,7 @@ if __name__ == '__main__':
 
     from train_face_comparer import load_face_comparer_module
     #face_comparer_module, _ = load_face_comparer_module('configs/linear_basic.yml', for_eval=True)
-    face_comparer_module, _ = load_face_comparer_module('configs/arcface_basic.yml', for_eval=False)
+    face_comparer_module, _ = load_face_comparer_module('configs/arcface_basic.yml', for_eval=True)
     #face_comparer_module, _ = load_face_comparer_module('configs/sphereface_basic.yml', for_eval=True)
     face_features_extractor = face_comparer_module.face_comparer.face_features_extractor
 
@@ -107,13 +107,15 @@ if __name__ == '__main__':
         different_person_deltas = []
         for i in tqdm(range(num_trials)):
             p1, p2, is_different = target_dataset[i]
+            p1 = p1.cuda()
+            p2 = p2.cuda()
             if compare_feature_vectors_directly:
                 images = [p1, p2]
                 feature_vectors = [face_features_extractor(img.unsqueeze(0)) for img in images]
                 delta_feature = (feature_vectors[1] - feature_vectors[0]).abs().sum().item()
             else:
                 delta_feature = face_comparer_module.face_comparer.forward(p1.unsqueeze(0), p2.unsqueeze(0))
-                delta_feature = torch.sigmoid(delta_feature).mean(1).sum()
+                delta_feature = torch.sigmoid(delta_feature).mean(1).sum().detach().cpu().item()
             if is_different:
                 different_person_deltas.append(delta_feature)
             else:
@@ -134,8 +136,8 @@ if __name__ == '__main__':
             print(f"Cutoff training accuracy: {100 * cutoff_accuracy}")
 
 
-    run_experiment(pairs_dataset, 1000, compare_feature_vectors_directly=True)
-    print("Aligned Test complete")
+    #run_experiment(pairs_dataset, 1000, compare_feature_vectors_directly=True)
+    # print("Aligned Test complete")
     run_experiment(pairs_dataset, 1000, compare_feature_vectors_directly=False)
     print("Aligned Test complete (Full scorer)")
 
@@ -156,9 +158,9 @@ if __name__ == '__main__':
     # toPIL(im2).save('im2.png')
 
     #run_experiment(adverserial_dataset_1, 1000)
-    print("Adverserial Test Complete")
-    run_experiment(adverserial_dataset_2, 3000)
-    print("Adverserial With Identity Test Complete")
+    #print("Adverserial Test Complete")
+    #run_experiment(adverserial_dataset_2, 3000)
+    #print("Adverserial With Identity Test Complete")
     run_experiment(adverserial_dataset_2, 3000, compare_feature_vectors_directly=False)
     print("Adverserial With Identity Test Complete (Full scorer test)")
 
