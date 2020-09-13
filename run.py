@@ -133,7 +133,7 @@ for ref_im, ref_im_name, target_identity_im in dataloader:
                 output_filename = out_path / f"{ref_im_name[i]}_{output_suffix}.{ouptut_image_type}"
                 toPIL(HR[i].cpu().detach().clamp(0, 1)).save(output_filename)
                 print(f"Created {output_filename}")
-            if copy_target:
-                output_filename = out_path / f"{ref_im_name[0]}_{output_suffix}_target.{ouptut_image_type}"
-                toPIL(target_identity_im.cpu().detach().clamp(0, 1)).save(output_filename)
-                print(f"Copied target {output_filename}")
+                if copy_target:
+                    output_filename = out_path / f"{ref_im_name[0]}_{output_suffix}_target.{ouptut_image_type}"
+                    toPIL(target_identity_im[i].cpu().detach().clamp(0, 1)).save(output_filename)
+                    print(f"Copied target {output_filename}")
