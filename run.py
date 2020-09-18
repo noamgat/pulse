@@ -25,7 +25,12 @@ class Images(Dataset):
         target_image = ''
         if self.targets_path:
             img_filename = os.path.split(img_path)[-1]
-            target_img_path = self.targets_path.joinpath(img_filename)
+            if self.targets_path.is_file():
+                target_img_path = self.targets_path
+            elif self.targets_path.is_dir():
+                target_img_path = self.targets_path.joinpath(img_filename)
+            else:
+                raise Exception(f"Invalid target image location {self.targets_path}")
             if not target_img_path.exists():
                 raise Exception(f"Target image not found at {target_img_path}")
             target_image = torchvision.transforms.ToTensor()(Image.open(target_img_path))
