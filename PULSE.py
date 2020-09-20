@@ -193,4 +193,4 @@ class PULSE(torch.nn.Module):
         if(min_l2 <= eps):
             yield (gen_im.clone().cpu().detach().clamp(0, 1),loss_builder.D(best_im).cpu().detach().clamp(0, 1))
         else:
-            print("Could not find a face that downscales correctly within epsilon")
+            print(f"Could not find a face that downscales correctly within epsilon ({min_l2:.4f} > {eps})")

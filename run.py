@@ -8,14 +8,16 @@ import torchvision
 from math import log10, ceil
 import argparse
 import os
+from torchvision.datasets import CelebA
 
 
 class Images(Dataset):
-    def __init__(self, root_dir, duplicates, targets_dir=None, filename_prefix=''):
+    def __init__(self, root_dir, duplicates, targets_dir=None, filename_prefix='', celeba_db: CelebA = None):
         self.root_path = Path(root_dir)
         self.image_list = list(self.root_path.glob(f"{filename_prefix}*.png"))
         self.duplicates = duplicates # Number of times to duplicate the image in the dataset to produce multiple HR images
         self.targets_path = Path(targets_dir) if targets_dir else ''
+        self.celeba_db = celeba_db
 
     def __len__(self):
         return self.duplicates*len(self.image_list)
@@ -29,6 +31,19 @@ class Images(Dataset):
                 target_img_path = self.targets_path
             elif self.targets_path.is_dir():
                 target_img_path = self.targets_path.joinpath(img_filename)
+                if self.celeba_db:
+                    celeba_prefixes = [os.path.splitext(f)[0] for f in self.celeba_db.filename]
+                    image_idx, image_prefix = \
+                    [(i, prefix) for i, prefix in enumerate(celeba_prefixes) if img_filename.startswith(prefix)][0]
+                    identity_idx = self.celeba_db.identity[image_idx].item()
+                    identity_image_indices = [idx for idx, ident in enumerate(self.celeba_db.identity) if
+                                              ident.item() == identity_idx]
+                    if len(identity_image_indices) > 1:
+                        identity_image_indices.remove(image_idx)
+                    target_idx = identity_image_indices[(idx % self.duplicates) % len(identity_image_indices)]
+                    target_filename_prefix = celeba_prefixes[target_idx]
+                    target_filename = target_filename_prefix + img_filename[len(target_filename_prefix):]
+                    target_img_path = self.targets_path.joinpath(target_filename)
             else:
                 raise Exception(f"Invalid target image location {self.targets_path}")
             if not target_img_path.exists():
@@ -55,6 +70,8 @@ parser.add_argument('-overwrite', action='store_true', help='Recreate files even
 parser.add_argument('-input_prefix', type=str, default='', help='Only operate on filenames begnning with X')
 parser.add_argument('-output_image_type', type=str, default='jpg', help='What image type to create? png/jpg')
 parser.add_argument('-copy_target', action='store_true', help='Copy the target image besides the output')
+parser.add_argument('-celeba_pairs', action='store_true', help='Copy the target image besides the output')
+
 
 #PULSE arguments
 parser.add_argument('-seed', type=int, help='manual seed to use')
@@ -77,10 +94,12 @@ kwargs = vars(parser.parse_args())
 torch.cuda.set_device(kwargs['gpu_id'])
 os.environ['CUDA_VISIBLE_DEVICES'] = str(kwargs['gpu_id'])
 
+celeb_a = CelebA(root='CelebA_Raw', split='all') if kwargs["celeba_pairs"] else None
 dataset = Images(kwargs["input_dir"],
                  duplicates=kwargs["duplicates"],
                  targets_dir=kwargs["targets_dir"],
-                 filename_prefix=kwargs["input_prefix"])
+                 filename_prefix=kwargs["input_prefix"],
+                 celeba_db=celeb_a)
 print(f"Running on {len(dataset)} files")
 #targets_dataset = Images(kwargs["targets_dir"], duplicates=1)
 out_path = Path(kwargs["output_dir"])
@@ -142,3 +161,4 @@ for ref_im, ref_im_name, target_identity_im in dataloader:
                     output_filename = out_path / f"{ref_im_name[0]}_{output_suffix}_target.{ouptut_image_type}"
                     toPIL(target_identity_im[i].cpu().detach().clamp(0, 1)).save(output_filename)
                     print(f"Copied target {output_filename}")
+

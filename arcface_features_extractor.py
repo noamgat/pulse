@@ -20,7 +20,8 @@ class ArcfaceFeaturesExtractor(torch.nn.Module):
         if not load_pretrained:
             raise Exception("Not supported yet")
         checkpoint = model_path or 'InsightFace_v2/pretrained/BEST_checkpoint_r101.tar'
-        checkpoint = torch.load(checkpoint)
+        device_map = {source: "cpu" for source in ['cpu', 'cuda:0', 'cuda:1', 'cuda:2', 'cuda:3']}
+        checkpoint = torch.load(checkpoint, map_location=device_map)
 
         self.face_features_extractor = checkpoint['model'].module
         self.face_features_extractor.eval()

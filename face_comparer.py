@@ -44,7 +44,8 @@ class FaceComparer(torch.nn.Module):
                  hidden_dims=[],
                  initial_bias=None,
                  feature_normalization_mode=FEATURE_NORMALIZATION_ABS,
-                 feature_extractor_params={}):
+                 feature_extractor_params={},
+                 feature_normalization_scale=1.0):
         super(FaceComparer, self).__init__()
         if feature_extractor_model == 'facenet':
             self.face_features_extractor = self.create_facenet_features_extractor(load_pretrained, **feature_extractor_params)
@@ -63,6 +64,7 @@ class FaceComparer(torch.nn.Module):
         if initial_bias is not None:
             last_fc.weight.data = torch.ones_like(last_fc.weight.data)
             last_fc.bias.data = torch.ones_like(last_fc.bias.data) * initial_bias
+        self.feature_normalization_scale = feature_normalization_scale
         print("Done")
 
     def create_sphereface_features_extractor(self, load_pretrained):
@@ -133,8 +135,9 @@ class FaceComparer(torch.nn.Module):
         #mlp_output = mlp_output.squeeze(1)
         # decision = torch.sigmoid(mlp_output) #Using BCE loss, that will sigmoid
         decision = mlp_output
-        threshold_decision = features_diff.sum(dim=1)
-        threshold_decision = threshold_decision - 21
-        threshold_decision = threshold_decision.unsqueeze(1)
+        decision = decision * self.feature_normalization_scale
+        #threshold_decision = features_diff.sum(dim=1)
+        #threshold_decision = threshold_decision - 21
+        #threshold_decision = threshold_decision.unsqueeze(1)
         #return threshold_decision
         return decision
