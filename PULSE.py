@@ -2,6 +2,7 @@ import os
 
 from bicubic import BicubicDownsampleTargetSize
 from stylegan import G_synthesis,G_mapping
+from stylegan2_pytorch.model import Generator
 from dataclasses import dataclass
 from SphericalOptimizer import SphericalOptimizer
 from pathlib import Path
@@ -14,17 +15,26 @@ from drive import open_url
 
 
 class PULSE(torch.nn.Module):
-    def __init__(self, cache_dir, face_comparer_config, verbose=True):
+    def __init__(self, cache_dir, face_comparer_config, verbose=True, use_stylegan2=False):
         super(PULSE, self).__init__()
 
-        self.synthesis = G_synthesis().cuda()
+
+        if use_stylegan2:
+            if verbose: print("Loading Synthesis Network (StyleGan2)")
+            self.synthesis = Generator(1024, 512, 8, channel_multiplier=2).cuda()
+            checkpoint = torch.load('stylegan2_pytorch/stylegan2-ffhq-config-f.pt')
+            self.synthesis.load_state_dict(checkpoint["g_ema"])
+        else:
+            if verbose: print("Loading Synthesis Network")
+            self.synthesis = G_synthesis().cuda()
+            cache_dir = Path(cache_dir)
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            with open_url("https://drive.google.com/uc?id=1TCViX1YpQyRsklTVYEJwdbmK91vklCo8", cache_dir=cache_dir,
+                          verbose=verbose) as f:
+                self.synthesis.load_state_dict(torch.load(f))
         self.verbose = verbose
 
-        cache_dir = Path(cache_dir)
-        cache_dir.mkdir(parents=True, exist_ok = True)
-        if self.verbose: print("Loading Synthesis Network")
-        with open_url("https://drive.google.com/uc?id=1TCViX1YpQyRsklTVYEJwdbmK91vklCo8", cache_dir=cache_dir, verbose=verbose) as f:
-            self.synthesis.load_state_dict(torch.load(f))
+
 
         for param in self.synthesis.parameters():
             param.requires_grad = False

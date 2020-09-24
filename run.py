@@ -88,6 +88,7 @@ parser.add_argument('-lr_schedule', type=str, default='linear1cycledrop', help='
 parser.add_argument('-save_intermediate', action='store_true', help='Whether to store and save intermediate HR and LR images during optimization')
 parser.add_argument('-gpu_id', default=2, type=int, help='Which gpu to use')
 parser.add_argument('-face_comparer_config', default='configs/linear_basic.yml', type=str, help='YML file of face comparer')
+parser.add_argument('-use_stylegan2', action='store_true', help='Whether to use stylegan2 (default=stylegan1)')
 
 kwargs = vars(parser.parse_args())
 
@@ -109,7 +110,11 @@ ouptut_image_type = kwargs["output_image_type"]
 copy_target = kwargs["copy_target"]
 dataloader = DataLoader(dataset, batch_size=kwargs["batch_size"])
 
-model = PULSE(cache_dir=kwargs["cache_dir"], face_comparer_config=kwargs['face_comparer_config'])
+model = PULSE(cache_dir=kwargs["cache_dir"],
+              face_comparer_config=kwargs['face_comparer_config'],
+              use_stylegan2=kwargs['use_stylegan2']
+              )
+print("Loaded model")
 model = model.cuda()
 # model = DataParallel(model)
 
