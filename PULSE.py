@@ -21,9 +21,10 @@ class PULSE(torch.nn.Module):
 
         if use_stylegan2:
             if verbose: print("Loading Synthesis Network (StyleGan2)")
-            self.synthesis = Generator(1024, 512, 8, channel_multiplier=2).cuda()
+            self.synthesis = Generator(1024, 512, 8, channel_multiplier=2).cuda(1)
             checkpoint = torch.load('stylegan2_pytorch/stylegan2-ffhq-config-f.pt')
             self.synthesis.load_state_dict(checkpoint["g_ema"])
+            self.generate_on_device_2 = True
         else:
             if verbose: print("Loading Synthesis Network")
             self.synthesis = G_synthesis().cuda()
@@ -32,6 +33,7 @@ class PULSE(torch.nn.Module):
             with open_url("https://drive.google.com/uc?id=1TCViX1YpQyRsklTVYEJwdbmK91vklCo8", cache_dir=cache_dir,
                           verbose=verbose) as f:
                 self.synthesis.load_state_dict(torch.load(f))
+            self.generate_on_device_2 = False
         self.verbose = verbose
 
 
@@ -43,7 +45,7 @@ class PULSE(torch.nn.Module):
 
         if Path("gaussian_fit.pt").exists():
             # slight hack to get it from this flag
-            cuda_id = os.environ['CUDA_VISIBLE_DEVICES']
+            cuda_id = os.environ['CUDA_VISIBLE_DEVICES'].split(',')[0]
             self.gaussian_fit = torch.load("gaussian_fit.pt", map_location={'cuda:0': f'cuda:{cuda_id}'})
         else:
             if self.verbose: print("\tLoading Mapping Network")
@@ -64,7 +66,7 @@ class PULSE(torch.nn.Module):
         from train_face_comparer import load_face_comparer_module
         # Create an inception resnet (in eval mode):
         net, trainer = load_face_comparer_module(face_comparer_config, for_eval=True)
-        self.face_features_extractor = net.face_comparer
+        self.face_features_extractor = net.face_comparer.cuda()
 
     def forward(self, ref_im,
                 target_identity_im,
@@ -103,7 +105,9 @@ class PULSE(torch.nn.Module):
 
         for i in range(18):
             # dimension of the ith noise tensor
-            res = (batch_size, 1, 2**(i//2+2), 2**(i//2+2))
+            initial_noise_tensor_exp = 3 if self.generate_on_device_2 else 2
+            i_delta = 1 if self.generate_on_device_2 else 0
+            res = (batch_size, 1, 2**((i+i_delta)//2+2), 2**((i+i_delta)//2+2))
 
             if(noise_type == 'zero' or i in [int(layer) for layer in bad_noise_layers.split('.')]):
                 new_noise = torch.zeros(res, dtype=torch.float, device='cuda')
@@ -170,7 +174,16 @@ class PULSE(torch.nn.Module):
             latent_in = self.lrelu(latent_in*self.gaussian_fit["std"] + self.gaussian_fit["mean"])
 
             # Normalize image to [0,1] instead of [-1,1]
-            gen_im = (self.synthesis(latent_in, noise)+1)/2
+            if self.generate_on_device_2:
+                latent_in = latent_in.cuda(1)
+                noise = [n.cuda(1) for n in noise]
+                print(latent_in.device, self.synthesis.input.input.device)
+                gen_im = (self.synthesis(latent_in, noise=noise) + 1) / 2
+                latent_in = latent_in.cuda(0)
+                gen_im = gen_im.cuda(0)
+                noise = [n.cuda(0) for n in noise]
+            else:
+                gen_im = (self.synthesis(latent_in, noise) + 1) / 2
 
             # gen_identity_vector = self.face_features_extractor.forward(gen_im)
             # Calculate Losses
