@@ -1,5 +1,6 @@
 import os
 
+from attribute_detector import load_attribute_detector_from_checkpoint
 from bicubic import BicubicDownsampleTargetSize
 from stylegan import G_synthesis,G_mapping
 from stylegan2_pytorch.model import Generator
@@ -18,6 +19,7 @@ class PULSE(torch.nn.Module):
     def __init__(self, cache_dir, face_comparer_config, verbose=True, use_stylegan2=False):
         super(PULSE, self).__init__()
 
+        cuda_id = os.environ['CUDA_VISIBLE_DEVICES'].split(',')[0]
 
         if use_stylegan2:
             if verbose: print("Loading Synthesis Network (StyleGan2)")
@@ -27,7 +29,7 @@ class PULSE(torch.nn.Module):
             self.generate_on_device_2 = True
         else:
             if verbose: print("Loading Synthesis Network")
-            self.synthesis = G_synthesis().cuda()
+            self.synthesis = G_synthesis().cuda(f'cuda:{cuda_id}')
             cache_dir = Path(cache_dir)
             cache_dir.mkdir(parents=True, exist_ok=True)
             with open_url("https://drive.google.com/uc?id=1TCViX1YpQyRsklTVYEJwdbmK91vklCo8", cache_dir=cache_dir,
@@ -67,6 +69,15 @@ class PULSE(torch.nn.Module):
         # Create an inception resnet (in eval mode):
         net, trainer = load_face_comparer_module(face_comparer_config, for_eval=True)
         self.face_features_extractor = net.face_comparer.cuda()
+
+        attribute_detector_ckpt = face_comparer_config + '.attribs.ckpt'
+        if os.path.exists(attribute_detector_ckpt):
+            self.attribute_detector = load_attribute_detector_from_checkpoint(attribute_detector_ckpt)
+            self.attribute_detector.eval()
+        else:
+            print(f"Warning: no attribute detector checkpoint found at {attribute_detector_ckpt}."
+                  f" Attribute loss terms will crash.")
+            self.attribute_detector = None
 
     def forward(self, ref_im,
                 target_identity_im,
@@ -151,7 +162,7 @@ class PULSE(torch.nn.Module):
         #    target_identity_vector = self.face_features_extractor.extract_features(target_identity_im)
         #    target_identity_vector = target_identity_vector.detach()
 
-        loss_builder = LossBuilder(ref_im, target_identity_im, self.face_features_extractor, loss_str, eps).cuda()
+        loss_builder = LossBuilder(ref_im, target_identity_im, self.face_features_extractor, self.attribute_detector, loss_str, eps).cuda()
 
         min_loss = np.inf
         min_l2 = np.inf

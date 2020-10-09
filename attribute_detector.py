@@ -9,14 +9,10 @@ from torch.nn import functional as F
 from torch.utils.data import DataLoader, Dataset
 from torchvision.datasets import CelebA
 
-parser = argparse.ArgumentParser(description='Attribute Detector')
-parser.add_argument('-gpu_id', default='2', type=str, help='Which gpu to use. Can also use multigpu format')
-parser.add_argument('-face_comparer_config', default='configs/arcface_adv.yml', type=str, help='YML file of face comparer')
-parser.add_argument('-batch_size', type=int, default=16, help='Batch size to use during optimization')
-parser.add_argument('-ckpt', type=str, default=None, help='Checkpoint to start training from')
-kwargs = vars(parser.parse_args())
 
 #FEATURE_INDEX = 0
+from fairface_dataset import FairfaceDataset
+
 
 def build_mlp(input_dim, hidden_dims, output_dim):
     dims = [input_dim] + hidden_dims + [output_dim]
@@ -28,9 +24,13 @@ def build_mlp(input_dim, hidden_dims, output_dim):
             layers.append(torch.nn.ReLU())
     return torch.nn.Sequential(*layers)
 
-class FeaturesDataset(Dataset):
+
+class CelebAFeaturesDataset(Dataset):
     def __init__(self, feature_dict, split):
         celeb_a_train = CelebA(root='CelebA_Raw', split=split)
+        for attrib_idx, attrib_name in enumerate(celeb_a_train.attr_names):
+            print(f"Attribute {attrib_idx} : {attrib_name}")
+        self.num_features = len(celeb_a_train.attr_names)
         self.feature_attrib_pairs = []
         for i, fn in enumerate(celeb_a_train.filename):
             fn = os.path.splitext(fn)[0]
@@ -49,11 +49,42 @@ class FeaturesDataset(Dataset):
         attrib_vector = attrib.type(torch.float)
         return feature_vector, attrib_vector
 
-class LitModel(pl.LightningModule):
-    def __init__(self):
+class FairfaceFeaturesDataset(Dataset):
+    def __init__(self, feature_dict, split):
+        if split == 'valid':
+            split = 'val'
+        fairface_dataset = FairfaceDataset(split=split)
+        for attrib_idx, attrib_name in enumerate(fairface_dataset.races):
+            print(f"Attribute {attrib_idx} : {attrib_name}")
+        self.num_features = len(fairface_dataset.races)
+        self.feature_attrib_pairs = []
+        for i in range(len(fairface_dataset)):
+            fn, attrib_vector = fairface_dataset[i]
+            try:
+                fn = os.path.basename(os.path.splitext(fn)[0])
+                if fn in feature_dict:
+                    feature_vector = feature_dict[fn]
+                    #attrib_vector = attrib_vector[FEATURE_INDEX:FEATURE_INDEX+1]
+                    self.feature_attrib_pairs.append((feature_vector, attrib_vector))
+            except:
+                print("AH")
+        print("Done")
+
+    def __len__(self):
+        return len(self.feature_attrib_pairs)
+
+    def __getitem__(self, item):
+        feature, attrib = self.feature_attrib_pairs[item]
+        feature_vector = torch.FloatTensor(feature)
+        attrib_vector = torch.from_numpy(attrib).type(torch.float)
+        return feature_vector, attrib_vector
+
+
+class AttributeDetectorModule(pl.LightningModule):
+    def __init__(self, num_outputs=40):
         super().__init__()
         #self.l1 = torch.nn.Linear(512, 40)
-        self.l1 = build_mlp(512, [1024, 512], 40)
+        self.l1 = build_mlp(512, [1024, 512, 256, 128], num_outputs)
 
     def forward(self, x):
         logits = self.l1(x)
@@ -91,30 +122,47 @@ class LitModel(pl.LightningModule):
         return torch.optim.Adam(self.parameters(), lr=0.02)
 
 
-gpu_id = kwargs['gpu_id']
-os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu_id)
-#torch.cuda.set_device(gpu_id)
+def load_attribute_detector_from_checkpoint(ckpt_file):
+    loaded_model = AttributeDetectorModule.load_from_checkpoint(ckpt_file, map_location='cuda:0')
+    return loaded_model
 
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Attribute Detector')
+    parser.add_argument('-gpu_id', default='2', type=str, help='Which gpu to use. Can also use multigpu format')
+    parser.add_argument('-face_comparer_config', default='configs/arcface_adv.yml', type=str,
+                        help='YML file of face comparer')
+    parser.add_argument('-batch_size', type=int, default=16, help='Batch size to use during optimization')
+    parser.add_argument('-ckpt', type=str, default=None, help='Checkpoint to start training from')
+    parser.add_argument('-dataset', type=str, default='celeba', help='Which data set to use? celeba / fairface')
+    kwargs = vars(parser.parse_args())
 
-features_file = kwargs['face_comparer_config'] + '.features.json'
-if not os.path.exists(features_file):
-    raise Exception(f"Features json f{features_file} does not exist")
-feature_dict = json.load(open(features_file, "r"))
+    gpu_id = kwargs['gpu_id']
+    os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu_id)
+    #torch.cuda.set_device(gpu_id)
 
-dataset_train = FeaturesDataset(feature_dict, 'train')
-print(f"Loaded dataset with {len(dataset_train)} feature vectors")
-dataset_valid = FeaturesDataset(feature_dict, 'valid')
-train_loader = DataLoader(dataset_train, batch_size=kwargs['batch_size'], shuffle=True)#, num_workers=2)
-val_loader = DataLoader(dataset_valid, batch_size=kwargs['batch_size'])#, num_workers=2)
-config_dir, config_file = os.path.split(kwargs['face_comparer_config'])
-attribute_model_file = os.path.splitext(config_file)[0]
-checkpoint_callback = ModelCheckpoint(config_dir, save_weights_only=True, prefix=attribute_model_file)
+    dataset_name = kwargs['dataset']
+    is_fairface = dataset_name == 'fairface'
+    dataset_suffix = ".fairface_train_features.json" if is_fairface else ".celeba_features.json"
+    features_file = kwargs['face_comparer_config'] + dataset_suffix
+    if not os.path.exists(features_file):
+        raise Exception(f"Features json f{features_file} does not exist")
+    feature_dict = json.load(open(features_file, "r"))
 
-trainer = pl.Trainer(gpus=[torch.cuda.current_device()],
-                     checkpoint_callback=checkpoint_callback)
-if kwargs['ckpt']:
-    model = LitModel.load_from_checkpoint(kwargs['ckpt'], map_location='cuda:0')
-else:
-    model = LitModel()
+    dataset_class = FairfaceFeaturesDataset if is_fairface else CelebAFeaturesDataset
+    dataset_train = dataset_class(feature_dict, 'train')
+    print(f"Loaded dataset with {len(dataset_train)} feature vectors")
+    dataset_valid = dataset_class(feature_dict, 'valid')
+    train_loader = DataLoader(dataset_train, batch_size=kwargs['batch_size'], shuffle=True)#, num_workers=2)
+    val_loader = DataLoader(dataset_valid, batch_size=kwargs['batch_size'])#, num_workers=2)
+    config_dir, config_file = os.path.split(kwargs['face_comparer_config'])
+    attribute_model_file = os.path.splitext(config_file)[0] + "_" + dataset_name
+    checkpoint_callback = ModelCheckpoint(config_dir, save_weights_only=True, prefix=attribute_model_file)
 
-trainer.fit(model, train_loader, val_dataloaders=val_loader)
+    trainer = pl.Trainer(gpus=[torch.cuda.current_device()],
+                         checkpoint_callback=checkpoint_callback)
+    if kwargs['ckpt']:
+        model = load_attribute_detector_from_checkpoint(kwargs['ckpt'])
+    else:
+        model = AttributeDetectorModule(num_outputs=dataset_train.num_features)
+
+    trainer.fit(model, train_loader, val_dataloaders=val_loader)

@@ -140,78 +140,89 @@ def vector_angle(f1, f2):
     return angledistance
 
 if kwargs['generate_celeba_feature_vectors']:
-    features_file = kwargs['face_comparer_config'] + '.features.json'
-    if not os.path.exists(features_file) or kwargs['overwrite']:
-        feature_dict = {}
-        celeba_images = Images('CelebA_Raw/celeba/img_align_celeba', duplicates=1, extension='jpg')
-        bs = kwargs['batch_size']
-        dataloader = DataLoader(celeba_images, batch_size=bs)
-        for im, stem, target_image in tqdm(dataloader):
-            feature_vector = model.face_features_extractor.face_features_extractor.forward(im.cuda())
-            for i in range(bs):
-                try:
-                    feature_list = feature_vector[i].detach().cpu().numpy().tolist()
-                    feature_dict[stem[i]] = feature_list
-                except Exception as e:
-                    print(f"Error: {e}")
-        open(features_file, "w").write(json.dumps(feature_dict, indent=2, sort_keys=True))
-        print(f"Finished generating feature vectors for config {kwargs['face_comparer_config']}")
-    averages_file = kwargs['face_comparer_config'] + '.attribs.npy'
-    celeb_a_train = CelebA(root='CelebA_Raw', split='train')
-    if not os.path.exists(averages_file) or kwargs['overwrite']:
-        feature_dict = json.load(open(features_file, "r"))
-        num_attrs = len(celeb_a_train.attr_names)
-        num_features = len(next(iter(feature_dict.values())))
-        attr_match_matrix = torch.zeros((num_attrs, num_features), dtype=torch.float)
-        attr_mismatch_matrix = torch.zeros((num_attrs, num_features), dtype=torch.float)
-        for i, fn in enumerate(celeb_a_train.filename):
-            fn = os.path.splitext(fn)[0]
-            if fn in feature_dict:
-                feature_vector = torch.FloatTensor(feature_dict[fn]).unsqueeze(0)
-                attrib_vector = celeb_a_train.attr[i].unsqueeze(1).type(torch.float)
-                average_contribution = (attrib_vector * feature_vector)
-                attr_match_matrix += average_contribution
-                attrib_vector = 1 - attrib_vector
-                average_contribution = (attrib_vector * feature_vector)
-                attr_mismatch_matrix += average_contribution
-        num_attrib_matches = celeb_a_train.attr.sum(dim=0)
-        num_attrib_mismatches = len(celeb_a_train.filename) - num_attrib_matches
-        for attr_idx in range(num_attrs):
-            attr_match_matrix[attr_idx] /= num_attrib_matches[attr_idx]
-            attr_mismatch_matrix[attr_idx] /= num_attrib_mismatches[attr_idx]
-
-        torch.save({'match': attr_match_matrix, 'mismatch': attr_mismatch_matrix}, averages_file)
-        print(f"Finished generating attribute vectors for config {kwargs['face_comparer_config']}")
-    attr_match_obj = torch.load(averages_file)
-    attr_match_matrix = attr_match_obj['match']
-    attr_mismatch_matrix = attr_match_obj['mismatch']
-
-    feature_dict = json.load(open(features_file, "r"))
-    num_attrs = attr_match_matrix.shape[0]
-    attrib_accuracy = torch.zeros((num_attrs, ), dtype=torch.float)
-    num_tests = 0
-    for i, fn in enumerate(celeb_a_train.filename):
-        fn = os.path.splitext(fn)[0]
-        if fn in feature_dict:
-            feature_vector = torch.FloatTensor(feature_dict[fn]).unsqueeze(0)
-            attrib_vector = celeb_a_train.attr[i].type(torch.float)
-            match_scores = torch.matmul(attr_match_matrix, feature_vector.T).squeeze(1)
-            mismatch_scores = torch.matmul(attr_mismatch_matrix, feature_vector.T).squeeze(1)
-            match_decision = match_scores > mismatch_scores
-            success_vector = match_decision == attrib_vector
-            attrib_accuracy += success_vector
-            num_tests += 1
-    attrib_accuracy /= num_tests
-
-    for attr_idx in range(num_attrs):
-        attr_vec = attr_match_matrix[attr_idx]
-        attr_vec_abs = attr_vec.abs()
-        attr_norm = attr_vec_abs.sum(dim=-1)
-        num_large_attributes = (attr_vec_abs > (attr_norm * 0.01)).sum()
-        attr_angle = vector_angle(attr_match_matrix[attr_idx], attr_mismatch_matrix[attr_idx])
-        #print(f"Match<->Mismatch Angle for Attribute {celeb_a_train.attr_names[attr_idx]} : {attr_angle}")
-        #print(f"Meaningful dims: {num_large_attributes}")
-        print(f"Accuracy for attribute {celeb_a_train.attr_names[attr_idx]} : {100*attrib_accuracy[attr_idx]:.1f}")
+    features_files = [
+        kwargs['face_comparer_config'] + '.celeba_features.json',
+        kwargs['face_comparer_config'] + '.fairface_train_features.json',
+        kwargs['face_comparer_config'] + '. fairface_val_features.json'
+    ]
+    image_dirs = [
+        'CelebA_Raw/celeba/img_align_celeba',
+        'fairface/train',
+        'fairface/val'
+    ]
+    for features_file, image_dir in zip(features_files, image_dirs):
+        if not os.path.exists(features_file) or kwargs['overwrite']:
+            print(f"Started generating feature vectors {features_file}")
+            feature_dict = {}
+            celeba_images = Images(image_dir, duplicates=1, extension='jpg')
+            bs = kwargs['batch_size']
+            dataloader = DataLoader(celeba_images, batch_size=bs)
+            for im, stem, target_image in tqdm(dataloader):
+                feature_vector = model.face_features_extractor.face_features_extractor.forward(im.cuda())
+                for i in range(bs):
+                    try:
+                        feature_list = feature_vector[i].detach().cpu().numpy().tolist()
+                        feature_dict[stem[i]] = feature_list
+                    except Exception as e:
+                        print(f"Error: {e}")
+            open(features_file, "w").write(json.dumps(feature_dict, indent=2, sort_keys=True))
+            print(f"Finished generating feature vectors {features_file}")
+    # averages_file = kwargs['face_comparer_config'] + '.attribs.npy'
+    # celeb_a_train = CelebA(root='CelebA_Raw', split='train')
+    # if not os.path.exists(averages_file) or kwargs['overwrite']:
+    #     feature_dict = json.load(open(features_file, "r"))
+    #     num_attrs = len(celeb_a_train.attr_names)
+    #     num_features = len(next(iter(feature_dict.values())))
+    #     attr_match_matrix = torch.zeros((num_attrs, num_features), dtype=torch.float)
+    #     attr_mismatch_matrix = torch.zeros((num_attrs, num_features), dtype=torch.float)
+    #     for i, fn in enumerate(celeb_a_train.filename):
+    #         fn = os.path.splitext(fn)[0]
+    #         if fn in feature_dict:
+    #             feature_vector = torch.FloatTensor(feature_dict[fn]).unsqueeze(0)
+    #             attrib_vector = celeb_a_train.attr[i].unsqueeze(1).type(torch.float)
+    #             average_contribution = (attrib_vector * feature_vector)
+    #             attr_match_matrix += average_contribution
+    #             attrib_vector = 1 - attrib_vector
+    #             average_contribution = (attrib_vector * feature_vector)
+    #             attr_mismatch_matrix += average_contribution
+    #     num_attrib_matches = celeb_a_train.attr.sum(dim=0)
+    #     num_attrib_mismatches = len(celeb_a_train.filename) - num_attrib_matches
+    #     for attr_idx in range(num_attrs):
+    #         attr_match_matrix[attr_idx] /= num_attrib_matches[attr_idx]
+    #         attr_mismatch_matrix[attr_idx] /= num_attrib_mismatches[attr_idx]
+    #
+    #     torch.save({'match': attr_match_matrix, 'mismatch': attr_mismatch_matrix}, averages_file)
+    #     print(f"Finished generating attribute vectors for config {kwargs['face_comparer_config']}")
+    # attr_match_obj = torch.load(averages_file)
+    # attr_match_matrix = attr_match_obj['match']
+    # attr_mismatch_matrix = attr_match_obj['mismatch']
+    #
+    # feature_dict = json.load(open(features_file, "r"))
+    # num_attrs = attr_match_matrix.shape[0]
+    # attrib_accuracy = torch.zeros((num_attrs, ), dtype=torch.float)
+    # num_tests = 0
+    # for i, fn in enumerate(celeb_a_train.filename):
+    #     fn = os.path.splitext(fn)[0]
+    #     if fn in feature_dict:
+    #         feature_vector = torch.FloatTensor(feature_dict[fn]).unsqueeze(0)
+    #         attrib_vector = celeb_a_train.attr[i].type(torch.float)
+    #         match_scores = torch.matmul(attr_match_matrix, feature_vector.T).squeeze(1)
+    #         mismatch_scores = torch.matmul(attr_mismatch_matrix, feature_vector.T).squeeze(1)
+    #         match_decision = match_scores > mismatch_scores
+    #         success_vector = match_decision == attrib_vector
+    #         attrib_accuracy += success_vector
+    #         num_tests += 1
+    # attrib_accuracy /= num_tests
+    #
+    # for attr_idx in range(num_attrs):
+    #     attr_vec = attr_match_matrix[attr_idx]
+    #     attr_vec_abs = attr_vec.abs()
+    #     attr_norm = attr_vec_abs.sum(dim=-1)
+    #     num_large_attributes = (attr_vec_abs > (attr_norm * 0.01)).sum()
+    #     attr_angle = vector_angle(attr_match_matrix[attr_idx], attr_mismatch_matrix[attr_idx])
+    #     #print(f"Match<->Mismatch Angle for Attribute {celeb_a_train.attr_names[attr_idx]} : {attr_angle}")
+    #     #print(f"Meaningful dims: {num_large_attributes}")
+    #     print(f"Accuracy for attribute {celeb_a_train.attr_names[attr_idx]} : {100*attrib_accuracy[attr_idx]:.1f}")
 
     exit(0)
 

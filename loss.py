@@ -1,8 +1,10 @@
+import functools
+
 import torch
 from bicubic import BicubicDownSample
 
 class LossBuilder(torch.nn.Module):
-    def __init__(self, ref_im, target_identity_im, face_features_extractor, loss_str, eps):
+    def __init__(self, ref_im, target_identity_im, face_features_extractor, attribute_detector, loss_str, eps):
         super(LossBuilder, self).__init__()
         assert ref_im.shape[2]==ref_im.shape[3]
         im_size = ref_im.shape[2]
@@ -10,8 +12,9 @@ class LossBuilder(torch.nn.Module):
         assert im_size*factor==1024
         self.D = BicubicDownSample(factor=factor)
         self.ref_im = ref_im
-        self.target_identity_vector = face_features_extractor.extract_features(target_identity_im)
+        self.target_identity_vector = face_features_extractor.extract_features(target_identity_im) if target_identity_im else None
         self.face_features_extractor = face_features_extractor
+        self.attribute_detector = attribute_detector
         self.parsed_loss = [loss_term.split('*') for loss_term in loss_str.split('+')]
         self.eps = eps
 
@@ -44,6 +47,11 @@ class LossBuilder(torch.nn.Module):
         logit[logit < 0] = 0
         return logit.mean(1).sum()
 
+    def _loss_face_attribute(self, gen_im, attr_index, target_attr_value, **kwargs):
+        gen_identity_vector = self.face_features_extractor.extract_features(gen_im)
+        attr_vector = self.attribute_detector.forward(gen_identity_vector)
+        return (attr_vector[:, attr_index] - target_attr_value).abs().sum()
+
     # Uses geodesic distance on sphere to sum pairwise distances of the 18 vectors
     def _loss_geocross(self, latent, **kwargs):
         if(latent.shape[1] == 1):
@@ -75,6 +83,13 @@ class LossBuilder(torch.nn.Module):
             'IDENTITY_SCORE': self._loss_identity_score_sigmoid,
             'IDENTITY_SCORE_L1': self._loss_identity_score_l1,
         }
+        for attr_idx in range(40):
+            for attr_value in [0, 1]:
+                loss_name = f'ATTR_{attr_idx}_IS_{attr_value}'
+                loss_func = functools.partial(self._loss_face_attribute,
+                                              attr_index=attr_idx, target_attr_value=attr_value)
+                loss_fun_dict[loss_name] = loss_func
+
         losses = {}
         for weight, loss_type in self.parsed_loss:
             tmp_loss = loss_fun_dict[loss_type](**var_dict)
