@@ -65,29 +65,35 @@ class ArcfaceFeaturesExtractor(torch.nn.Module):
         features = self.face_features_extractor(x)
         return features
 
-    def torch_img_to_numpy_img(self, img):
+    @classmethod
+    def torch_img_to_numpy_img(cls, img):
         numpy_img = img.detach().cpu().numpy().transpose(1, 2, 0) * 255
         return numpy_img
 
-    def get_central_face_attributes(self, img):
+    @classmethod
+    def get_central_face_attributes(cls, img):
         # This does not generate gradients yet. We hope that the process works well enough without it.
         # Translate to H,W,D
-        numpy_img = self.torch_img_to_numpy_img(img)
+        numpy_img = cls.torch_img_to_numpy_img(img)
 
-        Image.fromarray((numpy_img).astype(np.uint8)).save('debug/get_central.jpeg')
+        #Image.fromarray((numpy_img).astype(np.uint8)).save('debug/get_central.jpeg')
 
         bboxes, landmarks = get_central_face_attributes_img(numpy_img)
         return bboxes, landmarks
 
-    def align_face(self, img, facial5points):
+    @classmethod
+    def align_face(cls, img, facial5points, crop_size=None):
+        if len(img.shape) != 3:
+            raise Exception("Expecting (C,W,H) shaped vector")
         #raw = cv.imread(img_fn, True)  # BGR
 
 
-        crop_size = (image_h, image_w)
+        crop_size = crop_size or (image_h, image_w)
 
         if facial5points is None:
             # Couldn't extract landmarks, just resize. (TODO: Crop a bit?)
-            return kornia.resize(img.unsqueeze(0), crop_size).squeeze(0)
+            #return kornia.resize(img.unsqueeze(0), crop_size).squeeze(0)
+            return kornia.resize(img.unsqueeze(0), crop_size)
 
         facial5points = np.reshape(facial5points, (2, 5))
 
@@ -103,16 +109,18 @@ class ArcfaceFeaturesExtractor(torch.nn.Module):
 
 
         # dst_img = warp_and_crop_face(raw, facial5points)
-        dst_img = self.warp_and_crop_face(img, facial5points, reference_pts=reference_5pts, crop_size=crop_size)
+        dst_img = cls.warp_and_crop_face(img, facial5points, reference_pts=reference_5pts, crop_size=crop_size)
         return dst_img
         #return img
 
-    def transformer(self, img):
+    @classmethod
+    def transformer(cls, img):
         normalize = transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
         img = normalize(img)
         return img
 
-    def warp_and_crop_face(self, src_img,  # BGR
+    @classmethod
+    def warp_and_crop_face(cls, src_img,  # BGR
                            facial_pts,
                            reference_pts=None,
                            crop_size=(96, 112),

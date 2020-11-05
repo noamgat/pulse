@@ -57,6 +57,7 @@ class FairfaceFeaturesDataset(Dataset):
         for attrib_idx, attrib_name in enumerate(fairface_dataset.races):
             print(f"Attribute {attrib_idx} : {attrib_name}")
         self.num_features = len(fairface_dataset.races)
+        self.num_features = 2
         self.feature_attrib_pairs = []
         for i in range(len(fairface_dataset)):
             fn, attrib_vector = fairface_dataset[i]
@@ -77,33 +78,45 @@ class FairfaceFeaturesDataset(Dataset):
         feature, attrib = self.feature_attrib_pairs[item]
         feature_vector = torch.FloatTensor(feature)
         attrib_vector = torch.from_numpy(attrib).type(torch.float)
+        attrib_vector = torch.FloatTensor([attrib_vector[0], 1 - attrib_vector[0]])
         return feature_vector, attrib_vector
 
 
 class AttributeDetectorModule(pl.LightningModule):
-    def __init__(self, num_outputs=40):
+    def __init__(self, num_outputs=40, is_one_hot=False):
         super().__init__()
         #self.l1 = torch.nn.Linear(512, 40)
-        self.l1 = build_mlp(512, [1024, 512, 256, 128], num_outputs)
+        self.l1 = build_mlp(512, [1024], num_outputs)
+        self.is_one_hot = is_one_hot
 
     def forward(self, x):
         logits = self.l1(x)
-        return torch.sigmoid(logits)
+        if self.is_one_hot:
+            return logits
+        else:
+            return torch.sigmoid(logits)
 
-    def training_step(self, batch, batch_idx):
+
+    def shared_training_step(self, batch):
         x, y = batch
         y_hat = self(x)
-        loss = F.mse_loss(y_hat, y)
-        num_correct = int((y_hat.round() == y).to(float).mean().item()*100)
+        if self.is_one_hot:
+            loss = F.binary_cross_entropy_with_logits(y_hat, y)
+            num_correct = (y_hat.argmax(dim=1) == y.argmax(dim=1)).to(float).mean().item() * 100
+        else:
+            loss = F.mse_loss(y_hat, y)
+            num_correct = int((y_hat.round() == y).to(float).mean().item() * 100)
+        return y_hat, loss, num_correct
+
+    def training_step(self, batch, batch_idx):
+        y_hat, loss, num_correct = self.shared_training_step(batch)
         tensorboard_logs = {'train_loss': loss}
         return {'loss': loss, 'log': tensorboard_logs, 'num_correct': num_correct}
 
     def validation_step(self, batch, batch_idx):
         x, y = batch
-        y_hat = self(x)
-        loss = F.mse_loss(y_hat, y)
-        num_correct = int((y_hat.round() == y).to(float).mean().item() * 100)
-        accuracy_per_attr = (y_hat.round() == y).float().mean(dim=0).detach().cpu()
+        y_hat, loss, num_correct = self.shared_training_step(batch)
+        accuracy_per_attr = (y_hat.round() == y).float().mean(dim=0).detach().cpu()  # TODO ONE HOT
         metrics = {'val_acc': num_correct, 'val_loss': loss, 'val_acc_per_attr': accuracy_per_attr}
         return metrics
 
@@ -142,6 +155,7 @@ if __name__ == '__main__':
 
     dataset_name = kwargs['dataset']
     is_fairface = dataset_name == 'fairface'
+    is_one_hot = is_fairface
     dataset_suffix = ".fairface_train_features.json" if is_fairface else ".celeba_features.json"
     features_file = kwargs['face_comparer_config'] + dataset_suffix
     if not os.path.exists(features_file):
@@ -163,6 +177,6 @@ if __name__ == '__main__':
     if kwargs['ckpt']:
         model = load_attribute_detector_from_checkpoint(kwargs['ckpt'])
     else:
-        model = AttributeDetectorModule(num_outputs=dataset_train.num_features)
+        model = AttributeDetectorModule(num_outputs=dataset_train.num_features, is_one_hot=is_one_hot)
 
     trainer.fit(model, train_loader, val_dataloaders=val_loader)
