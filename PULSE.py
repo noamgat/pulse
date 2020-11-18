@@ -79,6 +79,11 @@ class PULSE(torch.nn.Module):
                   f" Attribute loss terms will crash.")
             self.attribute_detector = None
 
+        if hasattr(self.face_features_extractor.face_features_extractor, 'race_detector') and \
+                self.face_features_extractor.face_features_extractor.race_detector:
+            print(f"Using fairface race detector as attribute detector")
+            self.attribute_detector = self.face_features_extractor.face_features_extractor.race_detector
+
     def forward(self, ref_im,
                 target_identity_im,
                 seed,

@@ -9,6 +9,9 @@ from celeba_aligned_copy import build_aligned_celeba, CelebAAdverserialDataset, 
 from config import IMG_DIR
 from config import pickle_file
 
+from fairface_dataset import FairfaceDataset
+import numpy as np
+
 # Data augmentation and normalization for training
 # Just normalization for validation
 data_transforms = {
@@ -100,3 +103,37 @@ class AdverserialFaceDataset(Dataset):
             item = (item + 1) % len(self)
             return self[item]
         return img1, img2, is_different
+
+
+class FairfaceImageDataset(Dataset):
+
+    def __init__(self, split):
+        self.inner_dataset = FairfaceDataset('../fairface', split=split)
+        self.transformer = data_transforms['train']
+
+    def __getitem__(self, i):
+        item, file, label = self.inner_dataset[i]
+        from config import device
+
+        #Copy-paste from get_image
+        bbox, landmarks = self.inner_dataset.get_face_points(item)
+        if landmarks is None:
+            #print(f"landmarks {file} has no landmarks - None")
+            return self[(i+1) % len(self)]
+        num_landmarks = np.prod(np.array(landmarks).shape)
+        if num_landmarks != 10:
+            #print(f"Image {file} has no landmarks - number of elements = {num_landmarks}")
+            return self[(i+1) % len(self)]
+
+        from utils import align_face
+        img = align_face(file, landmarks)  # BGR
+        # img = blur_and_grayscale(img)
+        img = img[..., ::-1]  # RGB
+        img = Image.fromarray(img, 'RGB')  # RGB
+        img = self.transformer(img)
+        img = img.to(device)
+
+        return img, label
+
+    def __len__(self):
+        return len(self.inner_dataset)

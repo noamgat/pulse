@@ -26,6 +26,12 @@ class ArcfaceFeaturesExtractor(torch.nn.Module):
         self.face_features_extractor = checkpoint['model'].module
         self.face_features_extractor.eval()
 
+        if 'race_fc' in checkpoint:
+            self.race_detector = checkpoint['race_fc'].module
+            self.race_detector.eval()
+        else:
+            self.race_detector = None
+
         # global face_features_extractor
         #face_features_extractor = checkpoint['model'].module
         #face_features_extractor.eval()
@@ -100,7 +106,7 @@ class ArcfaceFeaturesExtractor(torch.nn.Module):
         default_square = True
         inner_padding_factor = 0.25
         outer_padding = (0, 0)
-        output_size = (image_h, image_w)
+        output_size = (crop_size[0], crop_size[1])
 
         # get the reference 5 landmarks position in the crop settings
         reference_5pts = get_reference_facial_points(

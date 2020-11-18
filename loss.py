@@ -50,6 +50,8 @@ class LossBuilder(torch.nn.Module):
     def _loss_face_attribute(self, gen_im, attr_index, target_attr_value, **kwargs):
         gen_identity_vector = self.face_features_extractor.extract_features(gen_im)
         attr_vector = self.attribute_detector.forward(gen_identity_vector)
+        # HARD CODED HACK FOR FAIRFACE
+        attr_vector = torch.sigmoid(attr_vector)
         return (attr_vector[:, attr_index] - target_attr_value).abs().sum()
 
     # Uses geodesic distance on sphere to sum pairwise distances of the 18 vectors

@@ -89,7 +89,6 @@ class FaceComparer(torch.nn.Module):
         from arcface_features_extractor import ArcfaceFeaturesExtractor
         return ArcfaceFeaturesExtractor(load_pretrained, model_path)
 
-
     def extract_features(self, image_or_features):
         if len(image_or_features.shape) == 2:
             # Channels: Batch Size, Features
@@ -98,6 +97,11 @@ class FaceComparer(torch.nn.Module):
             # Channels: Batch Size, CHW
             #images = self.image_extractor(image_or_features)
             return self.face_features_extractor(image_or_features)
+
+    def extract_race_vector(self, image_or_features):
+        features = self.extract_features(image_or_features)
+        race_vector = self.face_features_extractor.race_detector(features)
+        return race_vector
 
     def forward(self, x_1, x_2):
         # Allow the forward pass to accept both images and pre-calculated feature vectors

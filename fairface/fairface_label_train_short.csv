@@ -1,0 +1,11 @@
+file,age,gender,race,service_test
+train/1.jpg,50-59,Male,East Asian,True
+train/2.jpg,30-39,Female,Indian,False
+train/3.jpg,3-9,Female,Black,False
+train/4.jpg,20-29,Female,Indian,True
+train/5.jpg,20-29,Female,Indian,True
+train/6.jpg,20-29,Male,White,True
+train/7.jpg,40-49,Male,Middle Eastern,False
+train/8.jpg,30-39,Female,Indian,True
+train/9.jpg,10-19,Male,White,True
+train/10.jpg,30-39,Male,Middle Eastern,False

@@ -1,0 +1,11 @@
+file,age,gender,race,service_test
+val/1.jpg,3-9,Male,East Asian,False
+val/2.jpg,50-59,Female,East Asian,True
+val/3.jpg,30-39,Male,White,True
+val/4.jpg,20-29,Female,Latino_Hispanic,True
+val/5.jpg,20-29,Male,Southeast Asian,False
+val/6.jpg,30-39,Male,Latino_Hispanic,False
+val/7.jpg,20-29,Male,Black,True
+val/8.jpg,3-9,Male,East Asian,False
+val/9.jpg,20-29,Male,Southeast Asian,False
+val/10.jpg,3-9,Male,Southeast Asian,False

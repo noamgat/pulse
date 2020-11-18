@@ -7,9 +7,12 @@ import pandas as pd
 import os
 from torch import nn
 from torchvision import transforms
+from torchvision.utils import save_image
 from tqdm import tqdm
 
 from arcface_features_extractor import ArcfaceFeaturesExtractor
+from utils import draw_bboxes
+
 
 class FairfaceDataset(Dataset):
 
@@ -31,6 +34,16 @@ class FairfaceDataset(Dataset):
         return list(self.race_one_hot.columns)
 
 
+def save_debug_image(debug_name, image_path, img):
+    image_dir, image_fn = os.path.split(image_path)
+    image_dir = image_dir + "_" + debug_name
+    os.makedirs(image_dir, exist_ok=True)
+    target_path = os.path.join(image_dir, image_fn)
+    save_image(img, target_path)
+    print(target_path)
+    #transforms.ToPILImage()((img*255).byte().squeeze(0).cpu().numpy()).save()
+counter = 1
+
 class FairfacePredictor(torch.nn.Module):
     def __init__(self):
         super().__init__()
@@ -51,13 +64,22 @@ class FairfacePredictor(torch.nn.Module):
         self.model_fair_7 = model_fair_7
         self.model_fair_4 = model_fair_4
 
-    def forward(self, image):
+    def forward(self, image_name, image):
         #print(f'2: {image.shape}')
+
+
+
+        save_debug_image('pre_resize', image_name, image)
         image = kornia.resize(image, 224, interpolation='area')
         #print(f'3: {image.shape}')
         image = kornia.normalize(image,
                                  mean=torch.FloatTensor([0.485, 0.456, 0.406]),
                                  std=torch.FloatTensor([0.229, 0.224, 0.225]))
+        save_debug_image('normalized', image_name, image)
+        global counter
+        counter += 1
+        if counter >= 10:
+            raise Exception("DONE")
         #print(f'4: {image.shape}')
         outputs = self.model_fair_7(image)
         race_outputs = outputs[:, :7]
@@ -71,7 +93,6 @@ if __name__ == '__main__':
     print(len(dataset))
     print(dataset[len(dataset)-1])
     print(dataset.races)
-
     trans = transforms.Compose([
         transforms.ToPILImage(),
         transforms.ToTensor()
@@ -83,14 +104,31 @@ if __name__ == '__main__':
     for i, (fn, race_vector) in enumerate(tqdm(dataset)):
         image = dlib.load_rgb_image(fn)
         image = trans(image)
-        image = image.view(3, 224, 224)  # reshape image to match model dimensions (1 batch size)
+
+        image_dir, image_fn = os.path.split(fn)
+        image_dir = image_dir + "_" + "loaded"
+        os.makedirs(image_dir, exist_ok=True)
+        target_path = os.path.join(image_dir, image_fn)
+        transforms.ToPILImage()(image).save(target_path)
+
+        save_debug_image('start', fn, image)
+        #image = image.view(3, 224, 224)  # reshape image to match model dimensions (1 batch size)
+        save_debug_image('post_view', fn, image)
         image = image.to(device)
         bboxes, landmarks = ArcfaceFeaturesExtractor.get_central_face_attributes(image)
+
+        import cv2  as cv
+        img_cv = cv.imread(fn, cv.IMREAD_COLOR)
+        img_cv = draw_bboxes(img_cv, bboxes, landmarks)
+        save_debug_image('landmarks', fn, transforms.ToTensor()(img_cv))
+
+
         image = image.squeeze(0)
-        image = ArcfaceFeaturesExtractor.align_face(image, landmarks, crop_size=(224, 224))
+        image = ArcfaceFeaturesExtractor.align_face(image, landmarks, crop_size=(300, 300))
+        save_debug_image('post_align', fn, image[0])
         #print(f'1: {image.shape}')
 
-        logits = module(image)
+        logits = module(fn, image)
         predicted = logits.argmax().detach().cpu().item()
         answer = race_vector.argmax()
         is_correct = predicted == answer

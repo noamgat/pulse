@@ -65,7 +65,8 @@ parser = argparse.ArgumentParser(description='PULSE')
 
 #I/O arguments
 parser.add_argument('-input_dir', type=str, default='input', help='input data directory')
-parser.add_argument('-targets_dir', type=str, default='targets', help='targets data directory')
+#parser.add_argument('-targets_dir', type=str, default='targets', help='targets data directory')
+parser.add_argument('-targets_dir', type=str, default=None, help='targets data directory')
 parser.add_argument('-output_dir', type=str, default='runs', help='output data directory')
 parser.add_argument('-output_suffix', type=str, default='0', help='output data directory')
 parser.add_argument('-cache_dir', type=str, default='cache', help='cache directory for model weights')
@@ -77,6 +78,7 @@ parser.add_argument('-output_image_type', type=str, default='jpg', help='What im
 parser.add_argument('-copy_target', action='store_true', help='Copy the target image besides the output')
 parser.add_argument('-celeba_pairs', action='store_true', help='Copy the target image besides the output')
 parser.add_argument('-generate_celeba_feature_vectors', action='store_true', help='Should we generate the celeba feature vectors?')
+parser.add_argument('-test_fairface', action='store_true', help='Should we test fairface accuracy?')
 
 
 #PULSE arguments
@@ -98,7 +100,7 @@ parser.add_argument('-use_stylegan2', action='store_true', help='Whether to use 
 
 kwargs = vars(parser.parse_args())
 
-#torch.cuda.set_device(kwargs['gpu_id'])
+#torch.cuda.set_device('cuda:' + kwargs['gpu_id'])
 os.environ['CUDA_VISIBLE_DEVICES'] = str(kwargs['gpu_id'])
 
 celeb_a = CelebA(root='CelebA_Raw', split='all') if kwargs["celeba_pairs"] else None
@@ -226,6 +228,29 @@ if kwargs['generate_celeba_feature_vectors']:
 
     exit(0)
 
+if kwargs['test_fairface']:
+    from fairface_dataset import FairfaceDataset
+    test_dataset = FairfaceDataset(split='val')
+    num_correct = 0
+    num_images = 0
+    try:
+        for img_path, attr_vector in tqdm(test_dataset):
+            im = torchvision.transforms.ToTensor()(Image.open(img_path))
+            im = im.unsqueeze(0)
+            feature_vector = model.face_features_extractor.face_features_extractor.forward(im.cuda())
+            race_vector = model.face_features_extractor.face_features_extractor.race_detector(feature_vector)
+            selected_race = race_vector[0].argmax()
+            correct_race = attr_vector.argmax()
+            is_correct = selected_race == correct_race
+            if is_correct:
+                num_correct += 1
+            num_images += 1
+    except:
+        pass
+
+    accuracy = num_correct / num_images
+    print(f"TEST FAIRFACE accuracy : {num_correct} / {num_images} ({accuracy*100:.2f}%)")
+    exit(0)
 
 for ref_im, ref_im_name, target_identity_im in dataloader:
     if not kwargs['overwrite']:

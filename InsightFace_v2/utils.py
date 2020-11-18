@@ -22,13 +22,14 @@ def clip_gradient(optimizer, grad_clip):
                 param.grad.data.clamp_(-grad_clip, grad_clip)
 
 
-def save_checkpoint(epoch, epochs_since_improvement, model, metric_fc, optimizer, acc, is_best):
+def save_checkpoint(epoch, epochs_since_improvement, model, metric_fc, race_fc, optimizer, acc, is_best):
     print('saving checkpoint ...')
     state = {'epoch': epoch,
              'epochs_since_improvement': epochs_since_improvement,
              'acc': acc,
              'model': model,
              'metric_fc': metric_fc,
+             'race_fc': race_fc,
              'optimizer': optimizer}
     # filename = 'checkpoint_' + str(epoch) + '_' + str(loss) + '.tar'
     filename = 'checkpoint.tar'
@@ -195,6 +196,8 @@ def parse_args():
     parser.add_argument('--debug', help='Is debugging with breakpoints? (Short epochs, no async)', action='store_true')
     parser.add_argument('--adverserial-weight', type=float, default=0.5, help='Weight of adverserial component')
     parser.add_argument('--adverserial-test-weight', type=float, default=0.2, help='Weight of adverserial component in decision threshold search')
+    parser.add_argument('--fairface', help='Use fairface training epochs', action='store_true')
+    parser.add_argument('--fairface-weight', type=float, default=0.5, help='Weight of fairface classification component')
     args = parser.parse_args()
     return args
 

@@ -11,7 +11,7 @@ from torchvision.utils import save_image
 
 from celeba_eval import celeba_test
 from config import device, grad_clip, print_freq
-from data_gen import ArcFaceDataset, AdverserialFaceDataset
+from data_gen import ArcFaceDataset, AdverserialFaceDataset, FairfaceImageDataset
 from focal_loss import FocalLoss
 from lfw_eval import lfw_test
 from models import resnet18, resnet34, resnet50, resnet101, resnet152, ArcMarginModel
@@ -29,6 +29,17 @@ def full_log(epoch):
     copyfile(src_file, dst_file)
 
 
+def build_simple_mlp(input_dim, hidden_dims, output_dim):
+    dims = [input_dim] + hidden_dims + [output_dim]
+    layers = []
+    for i in range(1, len(dims)):
+        layers.append(torch.nn.Linear(dims[i-1], dims[i]))
+        if i < len(dims)-1:
+            layers.append(torch.nn.BatchNorm1d(num_features=dims[i]))
+            layers.append(torch.nn.ReLU())
+    return torch.nn.Sequential(*layers)
+
+
 def train_net(args):
     torch.manual_seed(7)
     np.random.seed(7)
@@ -40,6 +51,9 @@ def train_net(args):
     is_adverserial = args.adverserial
     adverserial_weight = args.adverserial_weight
     adverserial_test_weight = args.adverserial_test_weight
+    is_fairface = args.fairface
+    fairface_weight = args.fairface_weight
+    fairface_mlp = None
     #if is_adverserial:
         # https://github.com/pytorch/pytorch/issues/40403
     #    torch.multiprocessing.set_start_method('spawn')  # good solution !!!!
@@ -63,6 +77,7 @@ def train_net(args):
         model = nn.DataParallel(model)
         metric_fc = ArcMarginModel(args)
         metric_fc = nn.DataParallel(metric_fc)
+        fairface_mlp = None
 
         if args.optimizer == 'sgd':
             optimizer = InsightFaceOptimizer(
@@ -72,6 +87,11 @@ def train_net(args):
             optimizer = InsightFaceOptimizer(
                 torch.optim.Adam([{'params': model.parameters()}, {'params': metric_fc.parameters()}],
                                  lr=args.lr, weight_decay=args.weight_decay))
+
+        if is_fairface:
+            fairface_mlp = build_simple_mlp(512, [256], 7)
+            fairface_mlp = fairface_mlp.to(device)
+            fairface_mlp = nn.DataParallel(fairface_mlp)
 
     else:
         checkpoint = torch.load(checkpoint)
@@ -90,6 +110,17 @@ def train_net(args):
             pass
         metric_fc = nn.DataParallel(metric_fc)
         optimizer = checkpoint['optimizer']
+
+        if is_fairface:
+            try:
+                fairface_mlp = checkpoint['race_fc']
+                fairface_mlp = fairface_mlp.module
+            except:
+                pass
+            if not fairface_mlp:
+                fairface_mlp = build_simple_mlp(512, [256], 7)
+            fairface_mlp = fairface_mlp.to(device)
+            fairface_mlp = nn.DataParallel(fairface_mlp)
 
     logger = get_logger()
 
@@ -121,6 +152,14 @@ def train_net(args):
             start_acc, threshold = (0.5, 75) if args.debug else test_func(model)
             logger.info(f'Starting accuracy={start_acc}, threshold={threshold}\n')
     max_train_rounds = 1000 if is_adverserial else -1
+
+    if is_fairface:
+        fairface_dataset = FairfaceImageDataset('train')
+        fairface_loader = torch.utils.data.DataLoader(fairface_dataset, batch_size=args.batch_size,
+                                                      shuffle=True,
+                                                      num_workers=num_workers,
+                                                      multiprocessing_context=None if num_workers == 0 else 'spawn')
+
     if args.debug:
         max_train_rounds = 10
         print_freq = 2
@@ -128,7 +167,7 @@ def train_net(args):
     # Epochs
     for epoch in range(start_epoch, args.end_epoch):
         # One epoch's training
-
+        post_batch_generators = []
         if is_adverserial and epoch > 0:
             post_batch_generator = create_train_adv_generator(train_loader=adv_loader,
                                                               model=model,
@@ -138,8 +177,17 @@ def train_net(args):
                                                               epoch=epoch,
                                                               logger=logger,
                                                               loss_multiplier=adverserial_weight)
-        else:
-            post_batch_generator = None
+            post_batch_generators.append(post_batch_generator)
+        if is_fairface:
+            post_batch_generator = create_train_fairface_generator(train_loader=fairface_loader,
+                                                                   model=model,
+                                                                   optimizer=optimizer,
+                                                                   epoch=epoch,
+                                                                   logger=logger,
+                                                                   loss_multiplier=fairface_weight,
+                                                                   decision_mlp=fairface_mlp)
+            post_batch_generators.append(post_batch_generator)
+
 
         # Standard epoch
         train_loss, train_acc = train(train_loader=train_loader,
@@ -150,7 +198,7 @@ def train_net(args):
                                       epoch=epoch,
                                       logger=logger,
                                       max_rounds=max_train_rounds,
-                                      post_batch_generator=post_batch_generator)
+                                      post_batch_generators=post_batch_generators)
 
         writer.add_scalar('model/train_loss', train_loss, epoch)
         writer.add_scalar('model/train_acc', train_acc, epoch)
@@ -199,10 +247,10 @@ def train_net(args):
         #         epochs_since_improvement = 0
 
         # Save checkpoint
-        save_checkpoint(epoch, epochs_since_improvement, model, metric_fc, optimizer, best_acc, is_best)
+        save_checkpoint(epoch, epochs_since_improvement, model, metric_fc, fairface_mlp, optimizer, best_acc, is_best)
 
 
-def train(train_loader, model, metric_fc, criterion, optimizer, epoch, logger, max_rounds=-1, post_batch_generator=None):
+def train(train_loader, model, metric_fc, criterion, optimizer, epoch, logger, max_rounds=-1, post_batch_generators=[]):
     model.train()  # train mode (dropout and batchnorm is used)
     metric_fc.train()
 
@@ -213,6 +261,9 @@ def train(train_loader, model, metric_fc, criterion, optimizer, epoch, logger, m
     for i, (img, label) in enumerate(train_loader):
         # Move to GPU, if available
         img = img.to(device)
+
+        #import torchvision
+        #torchvision.utils.save_image(img.cpu(), 'debug_insightface.png')
         label = label.to(device)  # [N, 1]
 
         # Forward prop.
@@ -248,11 +299,16 @@ def train(train_loader, model, metric_fc, criterion, optimizer, epoch, logger, m
         if 0 < max_rounds <= i:
             break
 
-        if post_batch_generator is not None:
-            try:
-                next(post_batch_generator)
-            except StopIteration:
-                # Match the number of iterations between the two trainer types
+        if post_batch_generators is not None:
+            should_stop = False
+            for post_batch_generator in post_batch_generators:
+                try:
+                    next(post_batch_generator)
+                except StopIteration:
+                    # Match the number of iterations between the two trainer types
+                    should_stop = True
+                    break
+            if should_stop:
                 break
 
     return losses.avg, top5_accs.avg
@@ -334,6 +390,66 @@ def create_train_adv_generator(train_loader, model, threshold, criterion, optimi
 
     return losses.avg, top5_accs.avg
 
+
+def create_train_fairface_generator(train_loader, model, optimizer, epoch, logger, loss_multiplier, decision_mlp):
+    #model.train()  # train mode (dropout and batchnorm is used)
+    #metric_fc.train()
+    yield
+    losses = AverageMeter()
+    top5_accs = AverageMeter()
+
+    # Batches
+    for i, (img, race_vector) in enumerate(train_loader):
+        bs = img.shape[0]
+        # Move to GPU, if available
+        #import torchvision
+        #torchvision.utils.save_image(img.cpu(), 'debug_fairface.png')
+        #raise Exception("DONE DEBUG")
+        img = img.to(device)
+
+        #os.makedirs('images/training_batches', exist_ok=True)
+        #save_image(torch.cat([torch.stack((i1, i2), dim=0) for i1, i2 in zip(img1, img2)]),
+        #           'images/training_batches/adv_batch.jpg')
+        #open('images/training_batches/label.txt', 'w').write(str(is_different_label.numpy().reshape(-1, 4)))
+
+        race_vector = race_vector.to(device).type_as(img)  # [N, NUM_RACES]
+
+        #img1 = img1[:1,:,:,:]
+
+        features = model(img)
+        decision = decision_mlp(features)
+
+        y_hat = decision
+        y = race_vector
+        loss = torch.nn.functional.binary_cross_entropy_with_logits(y_hat, y) * loss_multiplier
+        num_correct = (y_hat.argmax(dim=1) == y.argmax(dim=1)).to(float).sum().item()
+
+        # Back prop.
+        optimizer.zero_grad()
+        loss.backward()
+
+        # Clip gradients
+        optimizer.clip_gradient(grad_clip)
+
+        # Update weights
+        optimizer.step()
+
+        # Keep track of metrics
+        losses.update(loss.item())
+        binary_accuracy = num_correct / bs
+        #top5_accuracy = accuracy(threshold_decision, label, 5)
+        top5_accs.update(binary_accuracy)
+
+        # Print status
+        if i % print_freq == 0:
+            logger.info('Epoch: [{0}][{1}/{2}]\t'
+                        'Fairface Loss {loss.val:.4f} ({loss.avg:.4f})\t'
+                        'Fairface Accuracy {top5_accs.val:.3f} ({top5_accs.avg:.3f})'.format(epoch, i, len(train_loader),
+                                                                                         loss=losses,
+                                                                                         top5_accs=top5_accs))
+        yield
+
+    return losses.avg, top5_accs.avg
 
 def main():
     global args
