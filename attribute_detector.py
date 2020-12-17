@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision.datasets import CelebA
 
 
-#FEATURE_INDEX = 0
+FEATURE_INDEX = 0
 from fairface_dataset import FairfaceDataset
 
 
@@ -65,7 +65,7 @@ class FairfaceFeaturesDataset(Dataset):
                 fn = os.path.basename(os.path.splitext(fn)[0])
                 if fn in feature_dict:
                     feature_vector = feature_dict[fn]
-                    #attrib_vector = attrib_vector[FEATURE_INDEX:FEATURE_INDEX+1]
+                    attrib_vector = attrib_vector[FEATURE_INDEX:FEATURE_INDEX+1]
                     self.feature_attrib_pairs.append((feature_vector, attrib_vector))
             except:
                 print("AH")
@@ -170,6 +170,7 @@ if __name__ == '__main__':
     val_loader = DataLoader(dataset_valid, batch_size=kwargs['batch_size'])#, num_workers=2)
     config_dir, config_file = os.path.split(kwargs['face_comparer_config'])
     attribute_model_file = os.path.splitext(config_file)[0] + "_" + dataset_name
+    print("Saving trained model to " + attribute_model_file)
     checkpoint_callback = ModelCheckpoint(config_dir, save_weights_only=True, prefix=attribute_model_file)
 
     trainer = pl.Trainer(gpus=[torch.cuda.current_device()],

@@ -17,7 +17,7 @@ from lfw_eval import lfw_test
 from models import resnet18, resnet34, resnet50, resnet101, resnet152, ArcMarginModel
 from optimizer import InsightFaceOptimizer
 from utils import parse_args, save_checkpoint, AverageMeter, accuracy, get_logger
-
+from fairface_eval import fairface_test
 
 def full_log(epoch):
     full_log_dir = 'data/full_log'
@@ -159,6 +159,7 @@ def train_net(args):
                                                       shuffle=True,
                                                       num_workers=num_workers,
                                                       multiprocessing_context=None if num_workers == 0 else 'spawn')
+        test_func = partial(fairface_test, tail_fc=fairface_mlp)
 
     if args.debug:
         max_train_rounds = 10
@@ -393,7 +394,7 @@ def create_train_adv_generator(train_loader, model, threshold, criterion, optimi
 
 def create_train_fairface_generator(train_loader, model, optimizer, epoch, logger, loss_multiplier, decision_mlp):
     #model.train()  # train mode (dropout and batchnorm is used)
-    #metric_fc.train()
+    decision_mlp.train()
     yield
     losses = AverageMeter()
     top5_accs = AverageMeter()
