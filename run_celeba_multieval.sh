@@ -1,0 +1,12 @@
+GPU_ID=$1
+export CUDA_VISIBLE_DEVICES=$GPU_ID
+
+cd InsightFace_v2
+
+python celeba_eval.py pretrained/BEST_checkpoint_101_20200831.tar withidentity
+python celeba_eval.py pretrained/BEST_checkpoint_101_20200831.tar generated
+python celeba_eval.py pretrained/BEST_checkpoint_101_20200831.tar metaepoch2
+python celeba_eval.py pretrained/BEST_checkpoint_101_adv_20200908.tar withidentity
+python celeba_eval.py pretrained/BEST_checkpoint_101_adv_20200908.tar generated
+python celeba_eval.py pretrained/BEST_checkpoint_101_adv_20200908.tar metaepoch2
+

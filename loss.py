@@ -12,7 +12,8 @@ class LossBuilder(torch.nn.Module):
         assert im_size*factor==1024
         self.D = BicubicDownSample(factor=factor)
         self.ref_im = ref_im
-        self.target_identity_vector = face_features_extractor.extract_features(target_identity_im) if target_identity_im else None
+        self.target_identity_vector = face_features_extractor.extract_features(target_identity_im) \
+            if target_identity_im is not None else None
         self.face_features_extractor = face_features_extractor
         self.attribute_detector = attribute_detector
         self.parsed_loss = [loss_term.split('*') for loss_term in loss_str.split('+')]

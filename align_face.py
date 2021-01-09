@@ -39,7 +39,7 @@ print("Downloading Shape Predictor")
 f=open_url("https://drive.google.com/uc?id=1huhv8PYpNNKbGCLOaYUjOgR1pY5pmbJx", cache_dir=cache_dir, return_path=True)
 predictor = dlib.shape_predictor(f)
 
-all_files = sorted(Path(args.input_dir).glob("*.*"))
+all_files = sorted(Path(args.input_dir).glob("*.jpg"))
 
 
 def chunkify(lst,n):

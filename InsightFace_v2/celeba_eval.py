@@ -18,8 +18,9 @@ from celeba_aligned_copy import build_aligned_celeba, CelebAPairsDataset, CelebA
 from config import device
 from data_gen import data_transforms, AdverserialFaceDataset
 from utils import align_face, get_central_face_attributes, get_all_face_attributes, draw_bboxes
+import sys
 
-celeba_split = 'valid'  # train / valid / test / all
+celeba_split = 'all'  # train / valid / test / all
 
 normal_angles_file = f'data/celeba_angles_{celeba_split}.txt'
 normal_lfw_pickle = f'data/celeba_funneled_{celeba_split}.pkl'
@@ -31,14 +32,19 @@ celeba_raw = build_aligned_celeba('../CelebA_Raw', '../CelebA_large')
 celeba_orig = CelebA(root='../CelebA_Raw', split=celeba_split, download=False, target_type='identity')
 celeba = celeba_orig
 
-generated_suffix = 'withidentity'  # can also be 'generated'
+generated_suffix = 'withidentity'  # can also be 'generated', 'withidentity', 'metaepoch2'
+if __name__ == '__main__':
+    if len(sys.argv) > 2:
+        generated_suffix = sys.argv[2]
+        print(f"Using generated_suffix={generated_suffix}")
+
 generated = build_aligned_celeba('../CelebA_Raw', f'../CelebA_{generated_suffix}', new_image_suffix='_0', split=celeba_split)
 large_matching_generated = build_aligned_celeba('../CelebA_Raw', '../CelebA_large', custom_indices=generated.filtered_indices, split=celeba_split)
 adverserial_dataset_1 = CelebAAdverserialDataset(generated, large_matching_generated, return_indices=True)
 
-adverserial_pickle = f'data/celeba_adverserial_funneled_{celeba_split}.pkl'
-adverserial_test_pair_file = f'data/celeba_adverserial_test_pair_{celeba_split}.txt'
-adverserial_angles_file = f'data/celeba_adverserial_angles_{celeba_split}.txt'
+adverserial_pickle = f'data/celeba_adverserial_funneled_{celeba_split}_{generated_suffix}.pkl'
+adverserial_test_pair_file = f'data/celeba_adverserial_test_pair_{celeba_split}_{generated_suffix}.txt'
+adverserial_angles_file = f'data/celeba_adverserial_angles_{celeba_split}_{generated_suffix}.txt'
 
 angles_file = normal_angles_file
 lfw_pickle = normal_lfw_pickle
@@ -484,12 +490,20 @@ if __name__ == "__main__":
 
     print('Visualizing {}...'.format(angles_file))
     set_is_adverserial(False)
-    visualize(threshold)
+    #visualize(threshold)
     set_is_adverserial(True)
-    visualize(threshold)
+    #visualize(threshold)
 
     print('error analysis...')
     # error_analysis(threshold)
+
+    # Copy the generated files to another place for further analysis
+    output_dir = f'eval_results/{checkpoint_name}_{generated_suffix}'
+    os.makedirs(output_dir, exist_ok=True)
+    import shutil
+    for fn in [normal_angles_file, normal_lfw_pickle, normal_test_pair_file,
+               adverserial_pickle, adverserial_test_pair_file, adverserial_angles_file]:
+        shutil.copy(fn, output_dir)
 
 
 

@@ -1,6 +1,7 @@
 import json
 import math
 
+import pandas
 from tqdm import tqdm
 
 from PULSE import PULSE
@@ -61,6 +62,30 @@ class Images(Dataset):
         else:
             return image,img_path.stem+f"_{(idx % self.duplicates)+1}",target_image
 
+
+class FairfaceImages(Dataset):
+    def __init__(self, root_dir, fairface_csv, filename_prefix='', extension='png', **kwargs):
+        self.root_path = Path(root_dir)
+        self.image_list = list(self.root_path.glob(f"{filename_prefix}*.{extension}"))
+        fairface_dataset = pandas.read_csv(fairface_csv)
+        image_list_stems = [p.stem[:-2] for p in self.image_list]
+        dataset_stems = [Path(entry).stem for entry in fairface_dataset['file']]
+        dataset_lookup = {stem: idx for idx, stem in enumerate(dataset_stems)}
+        race_names = ['White', 'Black', 'Latino_Hispanic', 'East Asian', 'Southeast Asian', 'Indian', 'Middle Eastern']
+        image_list_race_names = [fairface_dataset['race'][dataset_lookup[stem]] for stem in image_list_stems]
+        self.image_list_races = [race_names.index(race_name) for race_name in image_list_race_names]
+        print("Done")
+
+    def __len__(self):
+        return len(self.image_list)
+
+    def __getitem__(self, item):
+        target_image_path = self.image_list[item]
+        target_image = torchvision.transforms.ToTensor()(Image.open(target_image_path))
+        target_race = self.image_list_races[item]
+        return target_image, target_image_path.stem, target_race
+
+
 parser = argparse.ArgumentParser(description='PULSE')
 
 #I/O arguments
@@ -79,6 +104,7 @@ parser.add_argument('-copy_target', action='store_true', help='Copy the target i
 parser.add_argument('-celeba_pairs', action='store_true', help='Copy the target image besides the output')
 parser.add_argument('-generate_celeba_feature_vectors', action='store_true', help='Should we generate the celeba feature vectors?')
 parser.add_argument('-test_fairface', action='store_true', help='Should we test fairface accuracy?')
+parser.add_argument('-fairface_csv_path', type=str, default='', help='Use fairface dataset instead of target dataset')
 
 
 #PULSE arguments
@@ -94,7 +120,7 @@ parser.add_argument('-learning_rate', type=float, default=0.4, help='Learning ra
 parser.add_argument('-steps', type=int, default=100, help='Number of optimization steps')
 parser.add_argument('-lr_schedule', type=str, default='linear1cycledrop', help='fixed, linear1cycledrop, linear1cycle')
 parser.add_argument('-save_intermediate', action='store_true', help='Whether to store and save intermediate HR and LR images during optimization')
-parser.add_argument('-gpu_id', default='2', type=str, help='Which gpu to use. Can also use multigpu format')
+parser.add_argument('-gpu_id', default='0', type=str, help='Which gpu to use. Can also use multigpu format')
 parser.add_argument('-face_comparer_config', default='configs/linear_basic.yml', type=str, help='YML file of face comparer')
 parser.add_argument('-use_stylegan2', action='store_true', help='Whether to use stylegan2 (default=stylegan1)')
 
@@ -109,6 +135,9 @@ dataset = Images(kwargs["input_dir"],
                  targets_dir=kwargs["targets_dir"],
                  filename_prefix=kwargs["input_prefix"],
                  celeba_db=celeb_a)
+if kwargs['fairface_csv_path']:
+    dataset = FairfaceImages(kwargs["input_dir"], kwargs['fairface_csv_path'], kwargs["input_prefix"])
+    print("Using fairface dataset, will replace ATTR_SOURCE_IS_1 in loss string with high res source's race")
 print(f"Running on {len(dataset)} files")
 #targets_dataset = Images(kwargs["targets_dir"], duplicates=1)
 out_path = Path(kwargs["output_dir"])
@@ -264,6 +293,12 @@ for ref_im, ref_im_name, target_identity_im in dataloader:
             print(f"Skipping batch of files {ref_im_name} as the outputs exist")
             continue
     ref_im = ref_im.cuda()
+    kwargs_copy = kwargs
+    if isinstance(target_identity_im, torch.LongTensor):
+        target_race = target_identity_im
+        kwargs_copy['loss_str'] = kwargs_copy['loss_str'].replace('ATTR_SOURCE_IS_1', f'ATTR_{target_race.item()}_IS_1')
+    else:
+        target_race = None
     if isinstance(target_identity_im, torch.FloatTensor):
         target_identity_im = target_identity_im.cuda()
     else:
@@ -275,7 +310,7 @@ for ref_im, ref_im_name, target_identity_im in dataloader:
             int_path_LR = Path(out_path / ref_im_name[i] / "LR")
             int_path_HR.mkdir(parents=True, exist_ok=True)
             int_path_LR.mkdir(parents=True, exist_ok=True)
-        for j,(HR,LR) in enumerate(model(ref_im,target_identity_im,**kwargs)):
+        for j,(HR,LR) in enumerate(model(ref_im,target_identity_im,**kwargs_copy)):
             for i in range(kwargs["batch_size"]):
                 toPIL(HR[i].cpu().detach().clamp(0, 1)).save(
                     int_path_HR / f"{ref_im_name[i]}_{j:0{padding}}_{output_suffix}.{ouptut_image_type}")
@@ -283,7 +318,7 @@ for ref_im, ref_im_name, target_identity_im in dataloader:
                     int_path_LR / f"{ref_im_name[i]}_{j:0{padding}}_{output_suffix}.{ouptut_image_type}")
     else:
         #out_im = model(ref_im,**kwargs)
-        for j,(HR,LR) in enumerate(model(ref_im, target_identity_im, **kwargs)):
+        for j,(HR,LR) in enumerate(model(ref_im, target_identity_im, **kwargs_copy)):
             for i in range(kwargs["batch_size"]):
                 output_filename = out_path / f"{ref_im_name[i]}_{output_suffix}.{ouptut_image_type}"
                 toPIL(HR[i].cpu().detach().clamp(0, 1)).save(output_filename)

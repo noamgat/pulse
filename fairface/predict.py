@@ -1,5 +1,7 @@
 from __future__ import print_function, division
 import warnings
+from pathlib import Path
+
 warnings.filterwarnings("ignore")
 import os.path
 import pandas as pd
@@ -28,6 +30,7 @@ def detect_face(image_paths,  SAVE_DETECTED_AT, default_max_size=800,size = 300,
     sp = dlib.shape_predictor('dlib_models/shape_predictor_5_face_landmarks.dat')
     base = 2000  # largest width and height
     for index, image_path in enumerate(image_paths):
+        print(f"Detecting {image_path}")
         if index % 1000 == 0:
             print('---%d/%d---' %(index, len(image_paths)))
         img = dlib.load_rgb_image(image_path)
@@ -224,10 +227,28 @@ if __name__ == "__main__":
     dlib.DLIB_USE_CUDA = True
     print("using CUDA?: %s" % dlib.DLIB_USE_CUDA)
     args = parser.parse_args()
-    SAVE_DETECTED_AT = "detected_faces2"
+    input_csv_name = args.input_csv
+    SAVE_DETECTED_AT = "detected_faces_" + input_csv_name.replace('.', '_')
     ensure_dir(SAVE_DETECTED_AT)
-    imgs = pd.read_csv(args.input_csv)[args.csv_column_name]
+    dataframe = pd.read_csv(args.input_csv)
+    imgs = dataframe[args.csv_column_name]
     detect_face(imgs, SAVE_DETECTED_AT)
     print("detected faces are saved at ", SAVE_DETECTED_AT)
     #Please change test_outputs.csv to actual name of output csv. 
     predidct_age_gender_race("test_outputs.csv", SAVE_DETECTED_AT)
+
+    output_dataframe = pd.read_csv("test_outputs.csv")
+    input_races = {}
+    for input_filename, input_race in zip(dataframe[args.csv_column_name], dataframe['race']):
+        input_races[Path(input_filename).stem] = input_race
+    output_truth_races = []
+    for aligned_face_filename in output_dataframe['face_name_align']:
+        clean_name = Path(aligned_face_filename).stem
+        clean_name = clean_name.replace("_face0", "").replace("_face1", "")
+        output_truth_races.append(input_races[clean_name])
+    output_dataframe['race_label'] = output_truth_races
+    output_dataframe.to_csv(f'{input_csv_name}_outputs.csv')
+    print(f"Final results at {input_csv_name}_outputs.csv")
+
+
+
